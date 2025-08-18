@@ -152,7 +152,7 @@ const init = async () => {
   app.use(mainRouter);
   app.use("/v1", apiRouter);
 
-  const PORT = 8080;
+  const PORT = Number(process.env.PORT) || 8080;
 
   server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);

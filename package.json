@@ -8,7 +8,7 @@
   ],
   "type": "module",
   "scripts": {
-    "vite:build": "bun -F @autumn/shared build && bun -F @autumn/vite build:bun",
+    "vite:build": "bun run -F @autumn/shared build && bun run -F @autumn/vite build:bun",
     "vite:start": "bun -F @autumn/vite start:bun",
     "shared": "bun -F @autumn/shared build",
     "server": "bun -F @autumn/shared build && bun -F @autumn/server start",
@@ -31,7 +31,7 @@
     "vite:build:bun": "bun -F @autumn/shared build && bun -F @autumn/vite build:bun",
     "vite:start:bun": "bun -F @autumn/shared build && bun -F @autumn/vite start:bun",
     "dev:bun": "concurrently \"cd server && bun run dev\" \"cd vite && bun run dev\" \"bun -F @autumn/shared dev:bun\"",
-    "build:all:bun": "bun run -F @autumn/shared build:bun && bun run -F @autumn/server prod:build:bun && bun run -F @autumn/vite build:bun",
+    "build:all:bun": "bun run -F @autumn/shared build && bun run -F @autumn/server build && bun run -F @autumn/vite build:bun",
     "build": "bun run build:all:bun",
     "start": "concurrently \"bun run server\" \"bun run vite:start\"",
     "start:production": "NODE_ENV=production bun run start",
