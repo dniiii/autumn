@@ -17,6 +17,12 @@ const parseAdminIds = (ids?: string) =>
     .map((s) => s.trim())
     .filter(Boolean);
 
+const parseEmails = (emails?: string) =>
+  (emails || "")
+    .split(/[\s,]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
 const defaultProdAdminIds = [""
 ];
 
@@ -39,3 +45,16 @@ export const dashboardOrigins = [
   "http://localhost:3000",
   process.env.CLIENT_URL!,
 ];
+
+// Admin emails used for invite-only mode and bootstrap
+const isProd = isProductionEnv;
+const configuredAdminEmails = parseEmails(
+  isProd
+    ? process.env.ADMIN_EMAILS_PROD || process.env.ADMIN_EMAILS
+    : process.env.ADMIN_EMAILS_DEV || process.env.ADMIN_EMAILS
+);
+
+export const ADMIN_EMAILS = configuredAdminEmails;
+
+export const INVITE_ONLY =
+  (process.env.AUTH_INVITE_ONLY || "false").toLowerCase() === "true";

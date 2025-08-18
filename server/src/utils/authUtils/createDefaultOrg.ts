@@ -6,6 +6,7 @@ import { invitation, user as userTable } from "@autumn/shared";
 import { slugify } from "@/utils/genUtils.js";
 import { Organization } from "better-auth/plugins/organization";
 import { and } from "drizzle-orm";
+import { ADMIN_EMAILS, INVITE_ONLY } from "@/utils/constants.js";
 
 export const createDefaultOrg = async ({
   session,
@@ -41,6 +42,15 @@ export const createDefaultOrg = async ({
       });
 
       return invites[0].organizationId as any;
+    }
+
+    // If invite-only is enabled, block default org creation for non-admins without invite
+    const isAdminEmail = (user?.email || "").toLowerCase() &&
+      ADMIN_EMAILS.includes((user?.email || "").toLowerCase());
+
+    if (INVITE_ONLY && !isAdminEmail) {
+      // No pending invite (handled above) and not admin: don't create a default org
+      return undefined;
     }
 
     let userName = user?.name;
