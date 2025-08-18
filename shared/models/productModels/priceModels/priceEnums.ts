@@ -1,5 +1,6 @@
 export enum BillingInterval {
   OneOff = "one_off",
+  Day = "day",
   Week = "week",
   Month = "month",
   Quarter = "quarter",

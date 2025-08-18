@@ -104,15 +104,14 @@ const validateProductItem = ({
     }
   }
 
-  // 5. If it's a price, can't have day, minute or hour interval
+  // 5. If it's a price, can't have minute or hour interval
   if (isFeaturePriceItem(item) || isPriceItem(item)) {
     if (
-      item.interval == ProductItemInterval.Day ||
       item.interval == ProductItemInterval.Minute ||
       item.interval == ProductItemInterval.Hour
     ) {
       throw new RecaseError({
-        message: `Price can't have day, minute or hour interval`,
+        message: `Price can't have minute or hour interval`,
         code: ErrCode.InvalidInputs,
         statusCode: StatusCodes.BAD_REQUEST,
       });

@@ -427,6 +427,14 @@ export const stripeToAutumnInterval = ({
   interval: string;
   intervalCount: number;
 }) => {
+  if (interval === "day" && intervalCount === 1) {
+    return BillingInterval.Day;
+  }
+
+  if (interval === "week" && intervalCount === 1) {
+    return BillingInterval.Week;
+  }
+
   if (interval === "month" && intervalCount === 1) {
     return BillingInterval.Month;
   }
