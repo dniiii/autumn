@@ -3,6 +3,10 @@ import {
   CustomerEntitlement,
   FullCusEntWithProduct,
   ResetCusEnt,
+  rollovers,
+  customerEntitlements,
+  customerProducts,
+  customers,
 } from "@autumn/shared";
 import { CusEntService } from "./internal/customers/cusProducts/cusEnts/CusEntitlementService.js";
 import { format } from "date-fns";
@@ -12,6 +16,7 @@ import { initDrizzle } from "./db/initDrizzle.js";
 import { resetCustomerEntitlement } from "./cron/cronUtils.js";
 import { OrgService } from "./internal/orgs/OrgService.js";
 import { notNullish } from "./utils/genUtils.js";
+import { and, eq, gt, inArray, isNotNull, lt } from "drizzle-orm";
 
 dotenv.config();
 
@@ -53,6 +58,44 @@ export const cronTask = async () => {
         data: toUpsert as CustomerEntitlement[],
       });
       console.log(`Upserted ${toUpsert.length} short entitlements`);
+    }
+
+    // Step 2: Expire rollovers for subscriptions canceled >30 days ago
+    const nowMs = Date.now();
+    const thirtyDaysAgoMs = nowMs - 30 * 24 * 60 * 60 * 1000;
+
+    const toExpire = await db
+      .select({ rolloverId: rollovers.id })
+      .from(rollovers)
+      .innerJoin(
+        customerEntitlements,
+        eq(rollovers.cus_ent_id, customerEntitlements.id)
+      )
+      .innerJoin(
+        customerProducts,
+        eq(customerEntitlements.customer_product_id, customerProducts.id)
+      )
+      .innerJoin(
+        customers,
+        eq(customerEntitlements.internal_customer_id, customers.internal_id)
+      )
+      .where(
+        and(
+          isNotNull(customerProducts.canceled_at),
+          lt(customerProducts.canceled_at, thirtyDaysAgoMs),
+          gt(rollovers.balance, 0)
+        )
+      );
+
+    if (toExpire.length > 0) {
+      const ids = toExpire.map((r) => r.rolloverId);
+      await db
+        .update(rollovers)
+        .set({ balance: 0, expires_at: nowMs })
+        .where(inArray(rollovers.id, ids));
+      console.log(`Expired ${ids.length} rollovers for long-canceled subs`);
+    } else {
+      console.log("No rollovers to expire for long-canceled subs");
     }
 
     console.log(

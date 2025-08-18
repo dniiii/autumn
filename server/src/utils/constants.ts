@@ -8,18 +8,34 @@ export const getActiveCusProductStatuses = () => [
   CusProductStatus.PastDue,
 ];
 
+const isProductionEnv =
+  process.env.ENV == "production" || process.env.NODE_ENV == "production";
+
+const parseAdminIds = (ids?: string) =>
+  (ids || "")
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+const defaultProdAdminIds = [""
+];
+
+const defaultDevAdminIds = [""];
+
+const configuredAdminIds = parseAdminIds(
+  isProductionEnv
+    ? process.env.ADMIN_USER_IDS_PROD || process.env.ADMIN_USER_IDS
+    : process.env.ADMIN_USER_IDS_DEV || process.env.ADMIN_USER_IDS
+);
+
 export const ADMIN_USER_IDs =
-  process.env.ENV == "production" || process.env.NODE_ENV == "production"
-    ? [
-        "user_2tMgAiPsQzX8JTHjZZh9m0VdvUv", // a
-        "user_2sB3tBXsnVVLlTKliQIqvvM2xfB", // j
-        "ZsDswIXyOGMP9y1V1At4dAZNaiggClSs", // t
-      ]
-    : ["user_2rypooIKyMQx81vMS8FFGx24UHU"];
+  configuredAdminIds.length > 0
+    ? configuredAdminIds
+    : isProductionEnv
+    ? defaultProdAdminIds
+    : defaultDevAdminIds;
 
 export const dashboardOrigins = [
   "http://localhost:3000",
-  "https://app.useautumn.com",
-  "https://staging.useautumn.com",
   process.env.CLIENT_URL!,
 ];

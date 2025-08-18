@@ -15,7 +15,18 @@ export default defineConfig({
     host: '0.0.0.0', // Required for Docker
     port: 3000,
     strictPort: true,
-    allowedHosts: ["dev.useautumn.com", "client.dev.useautumn.com", "localhost"],
+    allowedHosts: [
+      "dev.useautumn.com",
+      "client.dev.useautumn.com",
+      "localhost",
+      // Allow ngrok (or similar) public URL      
+      // Allow extra hosts via env (comma-separated)
+      ...(process.env.VITE_ALLOWED_HOSTS
+        ? process.env.VITE_ALLOWED_HOSTS.split(",")
+            .map((h) => h.trim())
+            .filter(Boolean)
+        : []),
+    ],
     watch: {
       usePolling: true, // Required for file watching in Docker on Windows
       interval: 1000,

@@ -74,4 +74,46 @@ export class EventService {
 
     return results;
   }
+
+  static async getByIdempotencyKey({
+    db,
+    orgId,
+    internalCustomerId,
+    env,
+    idempotencyKey,
+    limit = 50,
+  }: {
+    db: DrizzleCli;
+    internalCustomerId: string;
+    orgId: string;
+    env: string;
+    idempotencyKey: string;
+    limit?: number;
+  }) {
+    let results = await db
+      .select({
+        id: events.id,
+        event_name: events.event_name,
+        value: events.value,
+        created_at: events.created_at,
+        timestamp: events.timestamp,
+        idempotency_key: events.idempotency_key,
+        properties: events.properties,
+        set_usage: events.set_usage,
+        entity_id: events.entity_id,
+      })
+      .from(events)
+      .where(
+        and(
+          eq(events.internal_customer_id, internalCustomerId),
+          eq(events.org_id, orgId),
+          eq(events.env, env),
+          eq(events.idempotency_key, idempotencyKey)
+        )
+      )
+      .orderBy(desc(events.created_at))
+      .limit(limit);
+
+    return results;
+  }
 }

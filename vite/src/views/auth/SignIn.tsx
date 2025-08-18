@@ -59,7 +59,8 @@ export const SignIn = () => {
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
     try {
-      const frontendUrl = import.meta.env.VITE_FRONTEND_URL;
+      const frontendUrl =
+        import.meta.env.VITE_FRONTEND_URL || window.location.origin;
       const { data, error } = await signIn.social({
         provider: "google",
         callbackURL: `${frontendUrl}${callbackPath}`,
@@ -107,17 +108,22 @@ export const SignIn = () => {
           <>
             <div className="space-y-6">
               {/* Google Sign In Button */}
-              <Button
-                variant="auth"
-                onClick={handleGoogleSignIn}
-                isLoading={googleLoading}
-                startIcon={
-                  <FontAwesomeIcon icon={faGoogle} className="text-stone-400" />
-                }
-                className={height}
-              >
-                Continue with Google
-              </Button>
+              {import.meta.env.VITE_GOOGLE_SIGNIN_ENABLED === "true" && (
+                <Button
+                  variant="auth"
+                  onClick={handleGoogleSignIn}
+                  isLoading={googleLoading}
+                  startIcon={
+                    <FontAwesomeIcon
+                      icon={faGoogle}
+                      className="text-stone-400"
+                    />
+                  }
+                  className={height}
+                >
+                  Continue with Google
+                </Button>
+              )}
 
               {/* <Button
                 variant="auth"

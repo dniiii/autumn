@@ -34,11 +34,42 @@ cusRouter.get("/:customer_id/events", async (req: any, res: any) => {
     const { customer_id } = req.params;
     const orgId = req.orgId;
     const limit = req.query.limit || 10;
-    const period = req.query.period || "all";
+    const idempotencyKey = req.query.idempotency_key as string | undefined;
+
+    // Resolve user-provided id (external id or internal id) to internal_id
+    const customer = await CusService.get({
+      db,
+      idOrInternalId: customer_id,
+      orgId,
+      env,
+    });
+
+    if (!customer) {
+      throw new RecaseError({
+        message: "Customer not found",
+        code: ErrCode.CustomerNotFound,
+        statusCode: StatusCodes.NOT_FOUND,
+      });
+    }
+
+    const internalCustomerId = customer.internal_id;
+
+    if (idempotencyKey) {
+      const events = await EventService.getByIdempotencyKey({
+        db,
+        internalCustomerId,
+        env,
+        orgId,
+        idempotencyKey,
+        limit,
+      });
+      res.status(200).json({ events });
+      return;
+    }
 
     const events = await EventService.getByCustomerId({
       db,
-      internalCustomerId: customer_id,
+      internalCustomerId,
       env,
       orgId: orgId,
       limit,
@@ -333,7 +364,8 @@ cusRouter.get(
                 : undefined,
           });
 
-      let productV2 = mapToProductV2({ product: product!, features });
+<<<<<<< HEAD
+      let productV2 = product ? mapToProductV2({ product, features }) : null as any;
 
       let numVersions = await ProductService.getProductVersionCount({
         db,

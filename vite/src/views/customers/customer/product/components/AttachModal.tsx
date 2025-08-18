@@ -156,7 +156,7 @@ export const AttachModal = ({
         attachState,
         useInvoice,
         enableProductImmediately,
-        successUrl: `${import.meta.env.VITE_FRONTEND_URL}${redirectUrl}`,
+        successUrl: `${import.meta.env.VITE_FRONTEND_URL || window.location.origin}${redirectUrl}`,
         version: version || product.version,
       });
 
