@@ -1,4 +1,4 @@
-import { createConvexClient, api } from "./convexClient.js";
+import { createConvexClient } from "./convexClient.js";
 
 export type CreditsPayload = {
   balance: number;
@@ -39,7 +39,8 @@ export async function publishCreditsProjection({
     throw new Error("Missing CONVEX_SERVICE_SECRET env var");
   }
   try {
-    await convex.mutation(api.credits.setCreditsProjection, {
+    // Call by name so we can target main app Convex without local codegen
+    await convex.mutation("credits:setProjection" as any, {
       userId,
       payload,
       serviceSecret,

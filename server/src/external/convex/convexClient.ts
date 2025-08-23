@@ -1,5 +1,4 @@
 import { ConvexHttpClient } from "convex/browser";
-import { api } from "../../../convex/_generated/api.js";
 
 export function createConvexClient(): ConvexHttpClient {
   const url = process.env.CONVEX_URL || process.env.CONVEX_CLOUD_URL;
@@ -8,7 +7,5 @@ export function createConvexClient(): ConvexHttpClient {
   }
   return new ConvexHttpClient(url);
 }
-
-export { api };
 
 

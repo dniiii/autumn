@@ -108,3 +108,6 @@ stat.sh
 
 
 railway
+
+# Optional: ignore local Convex generated bindings
+server/convex/_generated/
