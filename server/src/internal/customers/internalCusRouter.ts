@@ -364,7 +364,6 @@ cusRouter.get(
                 : undefined,
           });
 
-<<<<<<< HEAD
       let productV2 = product ? mapToProductV2({ product, features }) : null as any;
 
       let numVersions = await ProductService.getProductVersionCount({
