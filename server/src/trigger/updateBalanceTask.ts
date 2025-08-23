@@ -44,6 +44,7 @@ import {
 } from "@/internal/products/prices/priceUtils.js";
 import { deductFromCusRollovers } from "@/internal/customers/cusProducts/cusEnts/cusRollovers/rolloverDeductionUtils.js";
 import { refreshCusCache } from "@/internal/customers/cusCache/updateCachedCus.js";
+import { syncCreditsToConvex } from "@/external/convex/syncCredits.js";
 
 // Decimal.set({ precision: 12 }); // 12 DP precision
 
@@ -718,6 +719,8 @@ export const runUpdateBalanceTask = async ({
       entityId,
     });
     // console.timeEnd("refreshCusCache");
+
+    await syncCreditsToConvex({ db, org, env, customerId, entityId, logger });
 
     if (!cusEnts || cusEnts.length === 0) {
       return;

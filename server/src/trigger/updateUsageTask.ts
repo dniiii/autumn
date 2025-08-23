@@ -22,6 +22,7 @@ import { CusService } from "@/internal/customers/CusService.js";
 import { DrizzleCli } from "@/db/initDrizzle.js";
 import { deductFromCusRollovers } from "@/internal/customers/cusProducts/cusEnts/cusRollovers/rolloverDeductionUtils.js";
 import { refreshCusCache } from "@/internal/customers/cusCache/updateCachedCus.js";
+import { syncCreditsToConvex } from "@/external/convex/syncCredits.js";
 
 // 2. Get deductions for each feature
 const getFeatureDeductions = ({
@@ -345,6 +346,9 @@ export const runUpdateUsageTask = async ({
       return;
     }
     console.log("   ✅ Customer balance updated");
+
+    // Mirror to Convex credits projection (Autumn is source of truth)
+    await syncCreditsToConvex({ db, org, env, customerId, entityId, logger });
   } catch (error) {
     logger.error(`ERROR UPDATING USAGE`);
     logger.error(error);

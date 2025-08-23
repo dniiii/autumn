@@ -20,6 +20,7 @@ import { ExtendedRequest } from "@/utils/models/Request.js";
 import { createStripeCli } from "./utils.js";
 import { deleteCusCache } from "@/internal/customers/cusCache/updateCachedCus.js";
 import { CusService } from "@/internal/customers/CusService.js";
+import { syncCreditsToConvex } from "@/external/convex/syncCredits.js";
 import { DrizzleCli } from "@/db/initDrizzle.js";
 import { handleInvoiceUpdated } from "./webhookHandlers/handleInvoiceUpdated.js";
 
@@ -333,5 +334,8 @@ export const handleStripeWebhookRefresh = async ({
       org,
       env,
     });
+
+    // Also mirror updated subscription status/credits to Convex
+    await syncCreditsToConvex({ db, org, env, customerId: cus.id!, logger });
   }
 };
