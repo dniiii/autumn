@@ -29,26 +29,36 @@ export type CreditsPayload = {
 export async function publishCreditsProjection({
   userId,
   payload,
+  logger,
 }: {
   userId: string;
   payload: CreditsPayload;
+  logger?: any;
 }) {
   const convex = createConvexClient();
   const serviceSecret = process.env.CONVEX_SERVICE_SECRET;
   if (!serviceSecret) {
-    throw new Error("Missing CONVEX_SERVICE_SECRET env var");
+    const msg = "Missing CONVEX_SERVICE_SECRET env var";
+    logger?.warn?.(msg);
+    throw new Error(msg);
   }
   try {
+    logger?.info?.("Publishing credits to Convex", { userId, balance: payload.balance });
     // Call by name so we can target main app Convex without local codegen
     await convex.mutation("credits:setProjection" as any, {
       userId,
       payload,
       serviceSecret,
     } as any);
+    logger?.info?.("Credits projection published", { userId });
   } catch (error) {
-    // Swallow errors to avoid blocking the primary transaction
-    // eslint-disable-next-line no-console
-    console.warn("Failed to publish credits to Convex", error);
+    const msg = "Failed to publish credits to Convex";
+    if (logger?.error) {
+      logger.error(msg, { error });
+    } else {
+      // eslint-disable-next-line no-console
+      console.warn(msg, error);
+    }
   }
 }
 

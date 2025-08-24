@@ -58,10 +58,14 @@ export async function syncCreditsToConvex(args: {
 }) {
   try {
     const { userId, ...payload } = await buildCreditsProjection(args);
-    await publishCreditsProjection({ userId, payload });
+    await publishCreditsProjection({ userId, payload, logger: args.logger });
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.warn("Convex mirror failed", e);
+    if (args.logger?.warn) {
+      args.logger.warn("Convex mirror failed", { error: e });
+    } else {
+      console.warn("Convex mirror failed", e);
+    }
   }
 }
 

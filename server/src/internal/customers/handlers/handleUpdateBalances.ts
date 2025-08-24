@@ -19,6 +19,7 @@ import {
 } from "@/internal/customers/cusProducts/cusEnts/cusEntUtils.js";
 import { CusEntService } from "@/internal/customers/cusProducts/cusEnts/CusEntitlementService.js";
 import { notNullish } from "@/utils/genUtils.js";
+import { syncCreditsToConvex } from "@/external/convex/syncCredits.js";
 
 const getCusFeaturesAndOrg = async (req: any, customerId: string) => {
   // 1. Get customer
@@ -293,6 +294,16 @@ export const handleUpdateBalances = async (req: any, res: any) => {
     await Promise.all(batchDeduct);
 
     logger.info("   ✅ Successfully updated balances");
+
+    // Publish updated projection to Convex
+    await syncCreditsToConvex({
+      db,
+      org,
+      env,
+      customerId: customer.id!,
+      entityId: req.params.entity_id,
+      logger,
+    });
 
     res.status(200).json({ success: true });
   } catch (error) {

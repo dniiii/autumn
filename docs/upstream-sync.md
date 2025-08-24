@@ -146,3 +146,7 @@ git push origin "$BRANCH" --force-with-lease
 Save as `scripts/sync-upstream.sh`, `chmod +x`, and run `./scripts/sync-upstream.sh staging`.
 
 
+git checkout staging
+git branch -m main
+git push origin :staging main
+git push -u origin main
