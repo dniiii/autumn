@@ -17,6 +17,7 @@ import { performDeductionOnCusEnt } from "@/trigger/updateBalanceTask.js";
 import { ExtendedRequest } from "@/utils/models/Request.js";
 import { DrizzleCli } from "@/db/initDrizzle.js";
 import { CusProductService } from "../cusProducts/CusProductService.js";
+import { syncCreditsToConvex } from "@/external/convex/syncCredits.js";
 
 const getCusOrgAndCusPrice = async ({
   db,
@@ -170,6 +171,16 @@ export const handleUpdateEntitlement = async (req: any, res: any) => {
       id: customer_entitlement_id,
       updates,
     });
+
+    // Non-invasive: publish updated projection to Convex (ignore failures)
+    syncCreditsToConvex({
+      db,
+      org,
+      env: req.env,
+      customerId: cusEnt.customer_id!,
+      entityId: entity_id,
+      logger,
+    }).catch(() => {});
 
     res.status(200).json({ success: true });
   } catch (error) {

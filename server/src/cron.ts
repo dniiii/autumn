@@ -12,6 +12,7 @@ import { initDrizzle } from "./db/initDrizzle.js";
 import { resetCustomerEntitlement } from "./cron/cronUtils.js";
 import { OrgService } from "./internal/orgs/OrgService.js";
 import { notNullish } from "./utils/genUtils.js";
+import { syncCreditsToConvex } from "@/external/convex/syncCredits.js";
 
 dotenv.config();
 
@@ -53,6 +54,24 @@ export const cronTask = async () => {
         data: toUpsert as CustomerEntitlement[],
       });
       console.log(`Upserted ${toUpsert.length} short entitlements`);
+
+      // Non-blocking: publish updated projections for affected customers
+      const publishSet = new Set<string>();
+      for (const cusEnt of batch) {
+        if (cusEnt.customer_id) publishSet.add(cusEnt.customer_id);
+      }
+      await Promise.all(
+        Array.from(publishSet).map((customerId) =>
+          syncCreditsToConvex({
+            db,
+            // Org resolution: try to read from first batch entitlement
+            org: (batch.find((b) => b.customer_id === customerId) as any)?.org || ({} as any),
+            env: (batch.find((b) => b.customer_id === customerId) as any)?.env,
+            customerId,
+            logger: console,
+          }).catch(() => {})
+        )
+      );
     }
 
     console.log(

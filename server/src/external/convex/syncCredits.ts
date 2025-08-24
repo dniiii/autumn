@@ -1,5 +1,5 @@
 import { DrizzleCli } from "@/db/initDrizzle.js";
-import { AppEnv, Organization } from "@autumn/shared";
+import { AppEnv, Organization, APIVersion } from "@autumn/shared";
 import { CusService } from "@/internal/customers/CusService.js";
 import { FeatureService } from "@/internal/features/FeatureService.js";
 import { getCustomerDetails } from "@/internal/customers/cusUtils/getCustomerDetails.js";
@@ -37,13 +37,122 @@ export async function buildCreditsProjection({
     logger,
     cusProducts: customer.customer_products,
     expand: [],
+    reqApiVersion: APIVersion.v1_2,
   });
   const balancesObj = cusDetails.customer?.features || cusDetails.features || {};
   const entries = Object.values(balancesObj as any);
   const total = entries.reduce((acc: number, e: any) => acc + (e.balance ?? 0), 0);
+
+  // Best-effort subscription info (optional fields)
+  let subscriptionTier: string | undefined;
+  let subscriptionStatus: string | undefined;
+  let subscriptionExpiry: string | undefined;
+  try {
+    const products = Array.isArray(customer.customer_products)
+      ? customer.customer_products
+      : [];
+    // Prefer Active, then PastDue, else most recent
+    const byPriority = (p: any) =>
+      p.status === "Active" ? 0 : p.status === "PastDue" ? 1 : 2;
+    const activeOrRecent = [...products].sort((a, b) => byPriority(a) - byPriority(b))[0];
+    if (activeOrRecent) {
+      subscriptionTier = activeOrRecent.product?.id || activeOrRecent.product_id || activeOrRecent.product?.name;
+      subscriptionStatus = activeOrRecent.status;
+      subscriptionExpiry = activeOrRecent.ended_at ? new Date(activeOrRecent.ended_at).toISOString() : undefined;
+    }
+  } catch {}
+
+  // Intervals and rollovers (best-effort from feature responses)
+  let intervals: any[] | undefined;
+  let rolloverExpiries: string[] | undefined;
+  let rolloverGroups: Array<{ iso: string; count: number }> | undefined;
+  // Breakdown and resets (best-effort)
+  let dailyAvailable = 0;
+  let subscriptionAvailable = 0; // monthly + yearly
+  let purchasedAvailable = 0; // permanent/no-interval
+  let nextDailyResetIso: string | undefined;
+  let nextMonthlyResetIso: string | undefined;
+  try {
+    const mapped = entries
+      .filter((e: any) => e && typeof e === "object")
+      .map((e: any) => ({
+        interval: e.interval || "unknown",
+        balance: typeof e.balance === "number" ? e.balance : 0,
+        nextResetAt: e.next_reset_at ? new Date(e.next_reset_at).toISOString() : undefined,
+        rollovers: Array.isArray(e.rollovers) ? e.rollovers : [],
+        breakdown: Array.isArray(e.breakdown) ? e.breakdown : undefined,
+      }));
+    if (mapped.length > 0) {
+      intervals = mapped.map((m) => ({ interval: m.interval, balance: m.balance, nextResetAt: m.nextResetAt }));
+      const allExp = mapped.flatMap((m) => m.rollovers.map((r: any) => r.expires_at)).filter(Boolean);
+      if (allExp.length > 0) {
+        rolloverExpiries = allExp.map((ts: number | string) => new Date(ts as any).toISOString());
+        const grouped = (rolloverExpiries as string[]).reduce((acc: Record<string, number>, iso: string) => {
+          acc[iso] = (acc[iso] || 0) + 1;
+          return acc;
+        }, {});
+        rolloverGroups = Object.entries(grouped).map(([iso, count]) => ({ iso, count }));
+      }
+
+      const consider = (interval: any, balance: any, nextResetAt?: any) => {
+        if (typeof balance === "number") {
+          const intStr = (interval || "").toString().toLowerCase();
+          if (intStr === "day" || intStr === "daily") {
+            dailyAvailable += balance;
+            if (nextResetAt) {
+              if (!nextDailyResetIso || new Date(nextResetAt).getTime() < new Date(nextDailyResetIso).getTime()) {
+                nextDailyResetIso = nextResetAt;
+              }
+            }
+          } else if (intStr === "month" || intStr === "monthly" || intStr === "year" || intStr === "yearly") {
+            subscriptionAvailable += balance;
+            if (nextResetAt) {
+              if (!nextMonthlyResetIso || new Date(nextResetAt).getTime() < new Date(nextMonthlyResetIso).getTime()) {
+                nextMonthlyResetIso = nextResetAt;
+              }
+            }
+          } else {
+            purchasedAvailable += balance;
+          }
+        }
+      };
+
+      for (const m of mapped) {
+        if (Array.isArray(m.breakdown) && m.breakdown.length > 0) {
+          for (const b of m.breakdown) {
+            const next = b.next_reset_at ? new Date(b.next_reset_at).toISOString() : undefined;
+            consider(b.interval, b.balance, next);
+          }
+        } else {
+          // If interval unknown/multiple but has a next reset, treat as subscription instead of purchased
+          if ((m.interval === "unknown" || m.interval === "multiple") && m.nextResetAt) {
+            consider("monthly", m.balance, m.nextResetAt);
+          } else {
+            consider(m.interval, m.balance, m.nextResetAt);
+          }
+        }
+      }
+    }
+  } catch {}
   return {
     userId: customer.id!,
     balance: total,
+    subscriptionTier,
+    subscriptionStatus,
+    subscriptionExpiry,
+    intervals,
+    rolloverExpiries,
+    rolloverGroups,
+    breakdown: {
+      dailyFree: dailyAvailable ? { available: dailyAvailable } : undefined,
+      subscription: subscriptionAvailable ? { available: subscriptionAvailable } : undefined,
+      purchased: purchasedAvailable ? { available: purchasedAvailable } : undefined,
+    },
+    resets: {
+      nextDailyReset: nextDailyResetIso,
+      nextMonthlyReset: nextMonthlyResetIso,
+      nextRolloverExpiry: rolloverExpiries && rolloverExpiries.length > 0 ? rolloverExpiries[0] : undefined,
+    },
     updatedAt: Date.now(),
   };
 }
