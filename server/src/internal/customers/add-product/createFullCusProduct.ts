@@ -36,6 +36,7 @@ import { addExistingUsagesToCusEnts } from "../cusProducts/cusEnts/cusEntUtils/g
 import { RepService } from "../cusProducts/cusEnts/RepService.js";
 import { getNewProductRollovers } from "../cusProducts/cusEnts/cusRollovers/getNewProductRollovers.js";
 import { RolloverService } from "../cusProducts/cusEnts/cusRollovers/RolloverService.js";
+import { syncCreditsToConvex } from "@/external/convex/syncCredits.js";
 
 export const initCusPrice = ({
   price,
@@ -552,6 +553,22 @@ export const createFullCusProduct = async ({
     }
   } catch (error) {
     logger.error("Failed to add products updated webhook task to queue");
+  }
+
+  // Mirror updated credits/subscription projection to Convex for any attach flow
+  try {
+    if (!attachParams.fromMigration) {
+      await syncCreditsToConvex({
+        db,
+        org,
+        env: customer.env,
+        customerId: customer.id || customer.internal_id,
+        entityId: attachParams.entityId,
+        logger,
+      });
+    }
+  } catch (error) {
+    // Best-effort; do not block attach flows on Convex mirror failures
   }
 
   return fullCusProduct;
