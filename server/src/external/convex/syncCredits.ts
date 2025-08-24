@@ -83,7 +83,24 @@ export async function buildCreditsProjection({
         breakdown: Array.isArray(e.breakdown) ? e.breakdown : undefined,
       }));
     if (mapped.length > 0) {
-      intervals = mapped.map((m) => ({ interval: m.interval, balance: m.balance, nextResetAt: m.nextResetAt }));
+      // Build flattened intervals using per-entitlement breakdown when present
+      const flattened: Array<{ interval: string; balance: number; nextResetAt?: string }> = [];
+      for (const m of mapped) {
+        if (Array.isArray(m.breakdown) && m.breakdown.length > 0) {
+          for (const b of m.breakdown) {
+            flattened.push({
+              interval: (b.interval || "unknown").toString(),
+              balance: typeof b.balance === "number" ? b.balance : 0,
+              nextResetAt: b.next_reset_at ? new Date(b.next_reset_at).toISOString() : undefined,
+            });
+          }
+        } else {
+          flattened.push({ interval: m.interval, balance: m.balance, nextResetAt: m.nextResetAt });
+        }
+      }
+      // Filter noise: drop unknown with zero balance
+      intervals = flattened.filter((f) => !(f.interval === "unknown" && (!f.balance || f.balance === 0)));
+
       const allExp = mapped.flatMap((m) => m.rollovers.map((r: any) => r.expires_at)).filter(Boolean);
       if (allExp.length > 0) {
         rolloverExpiries = allExp.map((ts: number | string) => new Date(ts as any).toISOString());
@@ -92,6 +109,22 @@ export async function buildCreditsProjection({
           return acc;
         }, {});
         rolloverGroups = Object.entries(grouped).map(([iso, count]) => ({ iso, count }));
+
+        // Compute amounts per expiry for UI (embed inside intervals since schema allows any there)
+        const amountsByIso: Record<string, number> = {};
+        for (const m of mapped) {
+          for (const r of m.rollovers) {
+            const iso = new Date(r.expires_at as any).toISOString();
+            const amt = typeof r.balance === "number" ? r.balance : 0;
+            amountsByIso[iso] = (amountsByIso[iso] || 0) + amt;
+          }
+        }
+        const detailed = Object.entries(amountsByIso)
+          .map(([iso, amount]) => ({ iso, amount }))
+          .sort((a, b) => new Date(a.iso).getTime() - new Date(b.iso).getTime());
+        if (detailed.length > 0) {
+          (intervals as any[]).push({ type: "rollovers", rollovers: detailed });
+        }
       }
 
       const consider = (interval: any, balance: any, nextResetAt?: any) => {
@@ -104,7 +137,14 @@ export async function buildCreditsProjection({
                 nextDailyResetIso = nextResetAt;
               }
             }
-          } else if (intStr === "month" || intStr === "monthly" || intStr === "year" || intStr === "yearly") {
+          } else if (
+            intStr === "week" ||
+            intStr === "weekly" ||
+            intStr === "month" ||
+            intStr === "monthly" ||
+            intStr === "year" ||
+            intStr === "yearly"
+          ) {
             subscriptionAvailable += balance;
             if (nextResetAt) {
               if (!nextMonthlyResetIso || new Date(nextResetAt).getTime() < new Date(nextMonthlyResetIso).getTime()) {
@@ -117,18 +157,25 @@ export async function buildCreditsProjection({
         }
       };
 
-      for (const m of mapped) {
-        if (Array.isArray(m.breakdown) && m.breakdown.length > 0) {
-          for (const b of m.breakdown) {
-            const next = b.next_reset_at ? new Date(b.next_reset_at).toISOString() : undefined;
-            consider(b.interval, b.balance, next);
-          }
-        } else {
-          // If interval unknown/multiple but has a next reset, treat as subscription instead of purchased
-          if ((m.interval === "unknown" || m.interval === "multiple") && m.nextResetAt) {
-            consider("monthly", m.balance, m.nextResetAt);
-          } else {
-            consider(m.interval, m.balance, m.nextResetAt);
+      // Track if any monthly/yearly was found explicitly from breakdowns
+      let foundExplicitSubscription = false;
+
+      for (const f of intervals as Array<{ interval: string; balance: number; nextResetAt?: string }>) {
+        const beforeSub = subscriptionAvailable;
+        consider(f.interval, f.balance, f.nextResetAt);
+        if (subscriptionAvailable > beforeSub) foundExplicitSubscription = true;
+      }
+
+      // If no explicit monthly/yearly found but there is a combined nextResetAt at the feature level,
+      // allocate unknown balances with nextResetAt to subscription and undo their addition to purchased.
+      if (!foundExplicitSubscription) {
+        for (const f of intervals as Array<{ interval: string; balance: number; nextResetAt?: string }>) {
+          if ((f.interval === "unknown" || f.interval === "multiple") && f.nextResetAt && f.balance > 0) {
+            purchasedAvailable = Math.max(0, purchasedAvailable - f.balance);
+            subscriptionAvailable += f.balance;
+            if (!nextMonthlyResetIso || new Date(f.nextResetAt).getTime() < new Date(nextMonthlyResetIso).getTime()) {
+              nextMonthlyResetIso = f.nextResetAt;
+            }
           }
         }
       }
