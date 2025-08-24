@@ -43,14 +43,24 @@ export async function publishCreditsProjection({
     throw new Error(msg);
   }
   try {
-    logger?.info?.("Publishing credits to Convex", { userId, balance: payload.balance });
+    if (logger?.info) {
+      logger.info("Publishing credits to Convex", { userId, balance: payload.balance });
+    } else {
+      // eslint-disable-next-line no-console
+      console.info("Publishing credits to Convex", { userId, balance: payload.balance });
+    }
     // Call by name so we can target main app Convex without local codegen
     await convex.mutation("credits:setProjection" as any, {
       userId,
       payload,
       serviceSecret,
     } as any);
-    logger?.info?.("Credits projection published", { userId });
+    if (logger?.info) {
+      logger.info("Credits projection published", { userId });
+    } else {
+      // eslint-disable-next-line no-console
+      console.info("Credits projection published", { userId });
+    }
   } catch (error) {
     const msg = "Failed to publish credits to Convex";
     if (logger?.error) {
