@@ -61,16 +61,24 @@ export const cronTask = async () => {
         if (cusEnt.customer_id) publishSet.add(cusEnt.customer_id);
       }
       await Promise.all(
-        Array.from(publishSet).map((customerId) =>
-          syncCreditsToConvex({
-            db,
-            // Org resolution: try to read from first batch entitlement
-            org: (batch.find((b) => b.customer_id === customerId) as any)?.org || ({} as any),
-            env: (batch.find((b) => b.customer_id === customerId) as any)?.env,
-            customerId,
-            logger: console,
-          }).catch(() => {})
-        )
+        Array.from(publishSet).map(async (customerId) => {
+          try {
+            const cusEnt = batch.find((b) => b.customer_id === customerId);
+            if (!cusEnt) return;
+            
+            const org = await OrgService.get({ db, orgId: cusEnt.customer.org_id });
+            
+            await syncCreditsToConvex({
+              db,
+              org,
+              env: cusEnt.customer.env,
+              customerId,
+              logger: console,
+            });
+          } catch (error) {
+            console.error(`Failed to sync credits for customer ${customerId}:`, error);
+          }
+        })
       );
     }
 
