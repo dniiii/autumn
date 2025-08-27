@@ -7,6 +7,7 @@ import {
   FeatureType,
   FullCustomerEntitlement,
   Organization,
+  EntInterval,
 } from "@autumn/shared";
 import { getCusEntsInFeatures } from "@/internal/customers/cusUtils/cusUtils.js";
 
@@ -224,8 +225,42 @@ export const updateUsage = async ({
     return;
   }
 
+  const isRefund = value < 0;
+
   for (const obj of featureDeductions) {
     let { feature, deduction: toDeduct } = obj;
+
+    // Refunds: route negative amounts to the Lifetime (non-expiring) pocket if present
+    if (isRefund) {
+      const lifetimeEnt = cusEnts.find(
+        (ce) =>
+          ce.entitlement.internal_feature_id === feature.internal_id &&
+          ce.entitlement.interval === EntInterval.Lifetime
+      );
+
+      if (lifetimeEnt) {
+        await deductAllowanceFromCusEnt({
+          toDeduct,
+          cusEnt: lifetimeEnt,
+          deductParams: {
+            db,
+            feature,
+            env,
+            org,
+            cusPrices: cusPrices as any[],
+            customer,
+            properties,
+            entity: customer.entity,
+          },
+          featureDeductions,
+          willDeductCredits: true,
+          setZeroAdjustment: true,
+        });
+        // Done with this feature; move to next featureDeductions item
+        continue;
+      }
+      // No lifetime pocket found; fall through to default behavior
+    }
 
     for (const cusEnt of cusEnts) {
       if (cusEnt.entitlement.internal_feature_id != feature.internal_id) {

@@ -11,6 +11,7 @@ import {
   FullCusEntWithFullCusProduct,
   BillingType,
   FeatureUsageType,
+  EntInterval,
 } from "@autumn/shared";
 import { CusEntService } from "@/internal/customers/cusProducts/cusEnts/CusEntitlementService.js";
 import { Customer, FeatureType } from "@autumn/shared";
@@ -616,8 +617,41 @@ export const updateCustomerBalance = async ({
   }
 
   // 4. Perform deductions and update customer balance
+  const isRefund = (event.value ?? event.properties?.value ?? 0) < 0;
+
   for (const obj of featureDeductions) {
     let { feature, deduction: toDeduct } = obj;
+
+    // Refunds: if negative, route to Lifetime pocket when present
+    if (isRefund) {
+      const lifetimeEnt = cusEnts.find(
+        (ce) =>
+          ce.entitlement.internal_feature_id === feature.internal_id &&
+          ce.entitlement.interval === EntInterval.Lifetime
+      );
+
+      if (lifetimeEnt) {
+        await deductAllowanceFromCusEnt({
+          toDeduct,
+          cusEnt: lifetimeEnt,
+          deductParams: {
+            db,
+            feature,
+            env,
+            org,
+            cusPrices: cusPrices as any[],
+            customer,
+            properties: event.properties,
+            entity: customer.entity,
+          },
+          featureDeductions,
+          willDeductCredits: true,
+          setZeroAdjustment: true,
+        });
+        continue;
+      }
+      // else fall back to default routing
+    }
 
     for (const cusEnt of cusEnts) {
       if (cusEnt.entitlement.internal_feature_id != feature.internal_id) {
