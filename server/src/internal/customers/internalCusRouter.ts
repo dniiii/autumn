@@ -33,7 +33,7 @@ cusRouter.get("/:customer_id/events", async (req: any, res: any) => {
     const { db, org, features, env } = req;
     const { customer_id } = req.params;
     const orgId = req.orgId;
-    const limit = req.query.limit || 10;
+    const limit = parseInt(req.query.limit) || 10;
     const idempotencyKey = req.query.idempotency_key as string | undefined;
 
     // Resolve user-provided id (external id or internal id) to internal_id

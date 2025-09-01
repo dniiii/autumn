@@ -17,9 +17,11 @@ import { AppEnv } from "@autumn/shared";
 import { useCustomerContext } from "./CustomerContext";
 import { cn } from "@/lib/utils";
 import { CusProductEntityItem } from "./components/CusProductEntityItem";
+import { useAxiosSWR } from "@/services/useAxiosSwr";
+import { LoaderCircle } from "lucide-react";
 
 export const CustomerEventsList = ({
-  events,
+  events: initialEvents,
   customer,
   env,
 }: {
@@ -28,8 +30,27 @@ export const CustomerEventsList = ({
   env: AppEnv;
 }) => {
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
+  const [displayLimit, setDisplayLimit] = useState(10);
+  const [allEvents, setAllEvents] = useState(initialEvents);
   const navigate = useNavigate();
   const { showEntityView } = useCustomerContext();
+  
+  const { data, isLoading } = useAxiosSWR({
+    url: `/customers/${customer.id}/events?limit=${displayLimit}`,
+    env,
+    options: {
+      refreshInterval: 0,
+      fallbackData: { events: initialEvents },
+      onSuccess: (data) => {
+        if (data?.events) {
+          setAllEvents(data.events);
+        }
+      },
+    },
+  });
+  
+  const events = allEvents || initialEvents;
+  const hasMore = events.length === displayLimit;
 
   return (
     <div>
@@ -119,9 +140,29 @@ export const CustomerEventsList = ({
         </Row>
       ))}
 
-      <p className="text-t3 text-xs w-full text-center mt-2">
-        Showing last 10 events
-      </p>
+      <div className="flex flex-col items-center gap-2 mt-4 mb-2">
+        <p className="text-t3 text-xs">
+          Showing last {events.length} events
+        </p>
+        {hasMore && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setDisplayLimit(displayLimit + 20)}
+            disabled={isLoading}
+            className="text-xs"
+          >
+            {isLoading ? (
+              <>
+                <LoaderCircle className="animate-spin h-3 w-3 mr-2" />
+                Loading...
+              </>
+            ) : (
+              "Load More"
+            )}
+          </Button>
+        )}
+      </div>
     </div>
   );
 };
