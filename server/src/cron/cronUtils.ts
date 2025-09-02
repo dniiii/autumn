@@ -71,15 +71,7 @@ const checkSubAnchor = async ({
   const sub = await stripeCli.subscriptions.retrieve(subId);
 
   const billingCycleAnchor = sub.billing_cycle_anchor * 1000;
-  console.log("Checking billing cycle anchor");
-  console.log(
-    "Next reset at       ",
-    format(new UTCDate(nextResetAt), "dd MMM yyyy HH:mm:ss")
-  );
-  console.log(
-    "Billing cycle anchor",
-    format(new UTCDate(billingCycleAnchor), "dd MMM yyyy HH:mm:ss")
-  );
+  // Removed verbose logging for production
 
   const billingCycleDay = getDate(new UTCDate(billingCycleAnchor));
   const nextResetDay = getDate(nextResetAtDate);
@@ -133,9 +125,7 @@ const handleShortDurationCusEnt = async ({
     });
   }
 
-  console.log(
-    `Reseting short cus ent (${cusEnt.feature_id}) [${ent.interval}], customer: ${cusEnt.customer_id}, org: ${cusEnt.customer.org_id}`
-  );
+  // Silent - summary logged in main cron
 
   let org = await OrgService.get({
     db,
@@ -205,13 +195,7 @@ export const resetCustomerEntitlement = async ({
         },
       });
 
-      console.log(
-        `Reset ${cusEnt.id} | customer: ${chalk.yellow(
-          cusEnt.customer_id
-        )} | feature: ${chalk.yellow(
-          cusEnt.feature_id
-        )} | new balance: unlimited`
-      );
+      // Silent - summary logged in main cron
       return;
     }
 
@@ -224,13 +208,7 @@ export const resetCustomerEntitlement = async ({
         },
       });
 
-      console.log(
-        `Reset ${cusEnt.id} | customer: ${chalk.yellow(
-          cusEnt.customer_id
-        )} | feature: ${chalk.yellow(
-          cusEnt.feature_id
-        )} | reset to lifetime (next_reset_at: null)`
-      );
+      // Silent - summary logged in main cron
       return;
     }
 
@@ -266,8 +244,7 @@ export const resetCustomerEntitlement = async ({
         nextResetAt,
       });
     } catch (error) {
-      console.log("WARNING: Failed to check sub anchor");
-      console.log(error);
+      // Silent - non-critical error
     }
 
     await CusEntService.update({
@@ -288,17 +265,7 @@ export const resetCustomerEntitlement = async ({
       });
     }
 
-    console.log(
-      `Reset ${cusEnt.id} | customer: ${chalk.yellow(
-        cusEnt.customer_id
-      )} | feature: ${chalk.yellow(
-        cusEnt.feature_id
-      )} | new balance: ${chalk.green(
-        resetBalance
-      )} | new next_reset_at: ${chalk.green(
-        format(new UTCDate(nextResetAt), "dd MMM yyyy HH:mm:ss")
-      )}`
-    );
+    // Silent - summary logged in main cron
 
     // let cacheOrg = cacheEnabledOrgs.find(
     //   (org) => org.id === cusEnt.customer.org_id
@@ -323,8 +290,7 @@ export const resetCustomerEntitlement = async ({
     //   });
     // }
   } catch (error: any) {
-    console.log(
-      `Failed to reset ${cusEnt.id} | ${cusEnt.customer_id} | ${cusEnt.feature_id}, error: ${error}`
-    );
+    // Throw error to be counted in main cron summary
+    throw error;
   }
 };

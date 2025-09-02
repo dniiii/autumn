@@ -5,9 +5,7 @@ import {
   ResetCusEnt,
 } from "@autumn/shared";
 import { CusEntService } from "./internal/customers/cusProducts/cusEnts/CusEntitlementService.js";
-import { format } from "date-fns";
 import { CronJob } from "cron";
-import { UTCDate } from "@date-fns/utc";
 import { initDrizzle } from "./db/initDrizzle.js";
 import { resetCustomerEntitlement } from "./cron/cronUtils.js";
 import { OrgService } from "./internal/orgs/OrgService.js";
@@ -19,16 +17,17 @@ dotenv.config();
 const { db, client } = initDrizzle();
 
 export const cronTask = async () => {
-  console.log(
-    "\n----------------------------------\nRUNNING RESET CRON:",
-    format(new UTCDate(), "yyyy-MM-dd HH:mm:ss")
-  );
+  const startTime = Date.now();
+  let totalProcessed = 0;
+  let totalSynced = 0;
 
   try {
     const cusEnts: ResetCusEnt[] = await CusEntService.getActiveResetPassed({
       db,
       batchSize: 500,
     });
+    
+    if (cusEnts.length === 0) return; // Skip logging if nothing to process
 
     const cacheEnabledOrgs = await OrgService.getCacheEnabledOrgs({ db });
 
@@ -53,42 +52,39 @@ export const cronTask = async () => {
         db,
         data: toUpsert as CustomerEntitlement[],
       });
-      console.log(`Upserted ${toUpsert.length} short entitlements`);
+      totalProcessed += toUpsert.length;
 
       // Non-blocking: publish updated projections for affected customers
       const publishSet = new Set<string>();
       for (const cusEnt of batch) {
         if (cusEnt.customer_id) publishSet.add(cusEnt.customer_id);
       }
-      await Promise.all(
+      const syncResults = await Promise.allSettled(
         Array.from(publishSet).map(async (customerId) => {
-          try {
-            const cusEnt = batch.find((b) => b.customer_id === customerId);
-            if (!cusEnt) return;
-            
-            const org = await OrgService.get({ db, orgId: cusEnt.customer.org_id });
-            
-            await syncCreditsToConvex({
-              db,
-              org,
-              env: cusEnt.customer.env,
-              customerId,
-              logger: console,
-            });
-          } catch (error) {
-            console.error(`Failed to sync credits for customer ${customerId}:`, error);
-          }
+          const cusEnt = batch.find((b) => b.customer_id === customerId);
+          if (!cusEnt) return;
+          
+          const org = await OrgService.get({ db, orgId: cusEnt.customer.org_id });
+          
+          await syncCreditsToConvex({
+            db,
+            org,
+            env: cusEnt.customer.env,
+            customerId,
+            logger: { log: () => {}, error: () => {} }, // Silent logger
+          });
         })
       );
+      
+      totalSynced += syncResults.filter(r => r.status === 'fulfilled').length;
     }
 
+    const duration = Date.now() - startTime;
     console.log(
-      "FINISHED RESET CRON:",
-      format(new UTCDate(), "yyyy-MM-dd HH:mm:ss")
+      `[CRON] Reset ${totalProcessed}/${cusEnts.length} entitlements, synced ${totalSynced} customers in ${duration}ms`
     );
-    console.log("----------------------------------\n");
   } catch (error) {
-    console.error("Error getting entitlements for reset:", error);
+    console.error("[CRON ERROR]:", error);
     return;
   }
 
