@@ -555,17 +555,17 @@ export const createFullCusProduct = async ({
     logger.error("Failed to add products updated webhook task to queue");
   }
 
-  // Mirror updated credits/subscription projection to Convex for any attach flow
+  // Mirror updated credits/subscription projection to Convex for any attach flow (fire-and-forget)
   try {
     if (!attachParams.fromMigration) {
-      await syncCreditsToConvex({
+      syncCreditsToConvex({
         db,
         org,
         env: customer.env,
         customerId: customer.id || customer.internal_id,
         entityId: attachParams.entityId,
         logger,
-      });
+      }).catch(() => {});
     }
   } catch (error) {
     // Best-effort; do not block attach flows on Convex mirror failures

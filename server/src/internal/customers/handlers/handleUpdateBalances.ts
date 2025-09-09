@@ -295,15 +295,15 @@ export const handleUpdateBalances = async (req: any, res: any) => {
 
     logger.info("   ✅ Successfully updated balances");
 
-    // Publish updated projection to Convex
-    await syncCreditsToConvex({
+    // Publish updated projection to Convex (fire-and-forget)
+    syncCreditsToConvex({
       db,
       org,
       env,
       customerId: customer.id!,
       entityId: req.params.entity_id,
       logger,
-    });
+    }).catch(() => {});
 
     res.status(200).json({ success: true });
   } catch (error) {

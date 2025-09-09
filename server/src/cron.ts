@@ -19,7 +19,7 @@ const { db, client } = initDrizzle();
 export const cronTask = async () => {
   const startTime = Date.now();
   let totalProcessed = 0;
-  let totalSynced = 0;
+  let totalScheduled = 0;
 
   try {
     const cusEnts: ResetCusEnt[] = await CusEntService.getActiveResetPassed({
@@ -47,41 +47,42 @@ export const cronTask = async () => {
 
       let results = await Promise.all(batchResets);
 
-      let toUpsert = results.filter(notNullish);
+      const toUpsert = results.filter(notNullish);
+      const toUpsertStrict: CustomerEntitlement[] = (toUpsert as Array<CustomerEntitlement | undefined>).filter(
+        (e): e is CustomerEntitlement => Boolean(e)
+      );
       await CusEntService.upsert({
         db,
-        data: toUpsert as CustomerEntitlement[],
+        data: toUpsertStrict,
       });
       totalProcessed += toUpsert.length;
 
-      // Non-blocking: publish updated projections for affected customers
+      // Non-blocking: publish updated projections for customers whose entitlements actually changed
+      const updatedIds = new Set(toUpsertStrict.map((e) => e.id));
       const publishSet = new Set<string>();
       for (const cusEnt of batch) {
-        if (cusEnt.customer_id) publishSet.add(cusEnt.customer_id);
+        if (updatedIds.has(cusEnt.id) && cusEnt.customer_id) publishSet.add(cusEnt.customer_id);
       }
-      const syncResults = await Promise.allSettled(
-        Array.from(publishSet).map(async (customerId) => {
-          const cusEnt = batch.find((b) => b.customer_id === customerId);
-          if (!cusEnt) return;
-          
-          const org = await OrgService.get({ db, orgId: cusEnt.customer.org_id });
-          
-          await syncCreditsToConvex({
-            db,
-            org,
-            env: cusEnt.customer.env,
-            customerId,
-            logger: { log: () => {}, error: () => {} }, // Silent logger
-          });
-        })
-      );
+      // Fire-and-forget Convex syncs; do not wait in cron loop
+      for (const customerId of Array.from(publishSet)) {
+        const cusEnt = batch.find((b) => b.customer_id === customerId);
+        if (!cusEnt) continue;
+        const org = await OrgService.get({ db, orgId: cusEnt.customer.org_id });
+        syncCreditsToConvex({
+          db,
+          org,
+          env: cusEnt.customer.env,
+          customerId,
+          logger: { log: () => {}, error: () => {} }, // Silent logger
+        }).catch(() => {});
+      }
+      totalScheduled += publishSet.size;
       
-      totalSynced += syncResults.filter(r => r.status === 'fulfilled').length;
     }
 
     const duration = Date.now() - startTime;
     console.log(
-      `[CRON] Reset ${totalProcessed}/${cusEnts.length} entitlements, synced ${totalSynced} customers in ${duration}ms`
+      `[CRON] Reset ${totalProcessed}/${cusEnts.length} entitlements, scheduled ${totalScheduled} Convex syncs in ${duration}ms`
     );
   } catch (error) {
     console.error("[CRON ERROR]:", error);

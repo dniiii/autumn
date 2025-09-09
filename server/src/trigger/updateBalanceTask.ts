@@ -754,7 +754,8 @@ export const runUpdateBalanceTask = async ({
     });
     // console.timeEnd("refreshCusCache");
 
-    await syncCreditsToConvex({ db, org, env, customerId, entityId, logger });
+    // Fire-and-forget Convex mirror
+    syncCreditsToConvex({ db, org, env, customerId, entityId, logger }).catch(() => {});
 
     if (!cusEnts || cusEnts.length === 0) {
       return;

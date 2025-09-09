@@ -335,7 +335,7 @@ export const handleStripeWebhookRefresh = async ({
       env,
     });
 
-    // Also mirror updated subscription status/credits to Convex
-    await syncCreditsToConvex({ db, org, env, customerId: cus.id!, logger });
+    // Also mirror updated subscription status/credits to Convex (fire-and-forget)
+    syncCreditsToConvex({ db, org, env, customerId: cus.id!, logger }).catch(() => {});
   }
 };

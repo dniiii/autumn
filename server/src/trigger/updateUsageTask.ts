@@ -382,8 +382,8 @@ export const runUpdateUsageTask = async ({
     }
     console.log("   ✅ Customer balance updated");
 
-    // Mirror to Convex credits projection (Autumn is source of truth)
-    await syncCreditsToConvex({ db, org, env, customerId, entityId, logger });
+    // Mirror to Convex credits projection (Autumn is source of truth) - fire-and-forget
+    syncCreditsToConvex({ db, org, env, customerId, entityId, logger }).catch(() => {});
   } catch (error) {
     logger.error(`ERROR UPDATING USAGE`);
     logger.error(error);
