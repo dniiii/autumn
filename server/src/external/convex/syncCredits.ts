@@ -26,6 +26,7 @@ export async function buildCreditsProjection({
     orgId: org.id,
     env,
     entityId,
+    withSubs: true,
   });
   const features = await FeatureService.list({ db, orgId: org.id, env });
   const cusDetails: any = await getCustomerDetails({
@@ -48,17 +49,25 @@ export async function buildCreditsProjection({
   let subscriptionStatus: string | undefined;
   let subscriptionExpiry: string | undefined;
   try {
-    const products = Array.isArray(customer.customer_products)
-      ? customer.customer_products
+    // Prefer using processed customer details which already separate add-ons
+    const productsResp = Array.isArray((cusDetails as any).products)
+      ? (cusDetails as any).products
       : [];
-    // Prefer Active, then PastDue, else most recent
-    const byPriority = (p: any) =>
-      p.status === "Active" ? 0 : p.status === "PastDue" ? 1 : 2;
-    const activeOrRecent = [...products].sort((a, b) => byPriority(a) - byPriority(b))[0];
-    if (activeOrRecent) {
-      subscriptionTier = activeOrRecent.product?.id || activeOrRecent.product_id || activeOrRecent.product?.name;
-      subscriptionStatus = activeOrRecent.status;
-      subscriptionExpiry = activeOrRecent.ended_at ? new Date(activeOrRecent.ended_at).toISOString() : undefined;
+    const mains = productsResp.filter((p: any) => p && p.is_add_on === false);
+    if (mains.length > 0) {
+      // Prefer Active, then PastDue, else most recent
+      const byPriority = (p: any) =>
+        p.status === "Active" ? 0 : p.status === "PastDue" ? 1 : 2;
+      const activeOrRecent = [...mains].sort(
+        (a, b) => byPriority(a) - byPriority(b),
+      )[0];
+      if (activeOrRecent) {
+        subscriptionTier = activeOrRecent.id;
+        subscriptionStatus = activeOrRecent.status;
+        subscriptionExpiry = activeOrRecent.current_period_end
+          ? new Date(activeOrRecent.current_period_end).toISOString()
+          : undefined;
+      }
     }
   } catch {}
 
