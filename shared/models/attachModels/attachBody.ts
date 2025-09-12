@@ -54,6 +54,11 @@ export const AttachBodySchema = z
     enable_product_immediately: z.boolean().optional(),
     finalize_invoice: z.boolean().optional(),
 
+    // Restart billing now (no proration). When true, server will create a new
+    // subscription immediately and then expire the old one, and carry over
+    // leftover credits as rollover pockets.
+    restart_billing_cycle: z.boolean().optional(),
+
     // Checkout params
     skip_checkout: z.boolean().optional(),
   })

@@ -75,8 +75,11 @@ export const getAttachConfig = async ({
   const { isPublic, forceCheckout, invoiceOnly, isFree, noPaymentMethod } =
     flags;
 
-  let proration =
-    branch == AttachBranch.SameCustomEnts || branch == AttachBranch.NewVersion
+  const wantsRestart = attachBody.restart_billing_cycle === true;
+
+  let proration = wantsRestart
+    ? ProrationBehavior.None
+    : branch == AttachBranch.SameCustomEnts || branch == AttachBranch.NewVersion
       ? ProrationBehavior.None
       : org.config.bill_upgrade_immediately
         ? ProrationBehavior.Immediately
@@ -125,7 +128,7 @@ export const getAttachConfig = async ({
 
   const onlyCheckout = !isFree && checkoutFlow && !freeTrialWithoutCardRequired;
 
-  const disableMerge = branch == AttachBranch.MainIsTrial || onlyCheckout;
+  const disableMerge = wantsRestart || branch == AttachBranch.MainIsTrial || onlyCheckout;
 
   let config: AttachConfig = {
     branch,

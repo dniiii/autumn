@@ -42,6 +42,8 @@ export const getAttachFunction = async ({
     attachParams,
   });
 
+  const wantsRestart = (attachBody as any)?.restart_billing_cycle === true;
+
   // 1. Checkout function
   const newScenario = [
     AttachBranch.MultiAttach,
@@ -63,6 +65,12 @@ export const getAttachFunction = async ({
   ) {
     return AttachFunction.MultiAttach;
   } else if (newScenario) {
+    // If we are in a restart flow and there is a current main product,
+    // force the add-product path to create a brand-new subscription rather
+    // than merging/updating the existing one.
+    if (wantsRestart && curCusProduct) {
+      return AttachFunction.AddProduct;
+    }
     return AttachFunction.AddProduct;
   }
 
@@ -75,6 +83,10 @@ export const getAttachFunction = async ({
   ];
 
   if (updateScenarios.includes(branch)) {
+    if (wantsRestart && curCusProduct) {
+      // Force creation of a new subscription instead of updating
+      return AttachFunction.AddProduct;
+    }
     if (config.sameIntervals) {
       return AttachFunction.UpgradeSameInterval;
     } else {

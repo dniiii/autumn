@@ -410,7 +410,7 @@ export const createFullCusProduct = async ({
     features: attachParams.features,
   });
 
-  // 4. Get new rollovers
+  // 4. Get new rollovers (copy any existing rollover pockets from old plan)
   let rolloverOps = await getNewProductRollovers({
     db,
     curCusProduct: curCusProduct as FullCusProduct,
