@@ -285,7 +285,15 @@ export const getCusBalances = async ({
       entityId: entity?.id,
     });
 
-    if (rollover) {
+    // Only apply rollover amounts to monthly/yearly buckets. This keeps
+    // rollover pockets from inflating daily or lifetime lines while still
+    // surfacing the pockets in the feature response.
+    const entIntervalForRollover = ent.interval;
+    const isMonthlyOrYearly =
+      entIntervalForRollover === EntInterval.Month ||
+      entIntervalForRollover === EntInterval.Year;
+
+    if (rollover && isMonthlyOrYearly) {
       data[key].balance += rollover.balance;
       data[key].total += rollover.balance + rollover.usage;
       data[key].rollovers = rollover.rollovers;
