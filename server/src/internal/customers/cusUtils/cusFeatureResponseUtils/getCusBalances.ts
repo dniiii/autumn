@@ -76,11 +76,6 @@ export const getRolloverFields = ({
   cusEnt: FullCustomerEntitlement;
   entityId?: string;
 }) => {
-  let hasRollover = notNullish(cusEnt.entitlement.rollover);
-  if (!hasRollover) {
-    return null;
-  }
-
   let rollovers = cusEnt.rollovers || [];
 
   if (cusEnt.entitlement.entity_feature_id) {
