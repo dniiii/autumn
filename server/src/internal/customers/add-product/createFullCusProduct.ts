@@ -327,6 +327,31 @@ export const createFullCusProduct = async ({
     internalEntityId: attachParams.internalEntityId,
   });
 
+  // Prefer the latest active non-default paid main product as the source for
+  // carryover when available; otherwise fall back to the default (e.g., Free).
+  let sourceCusProduct = curCusProduct;
+  try {
+    const candidates = (attachParams.cusProducts || [])
+      .filter((cp) =>
+        [CusProductStatus.Active, CusProductStatus.PastDue].includes(cp.status)
+      )
+      .filter((cp) => !cp.product.is_add_on);
+
+    const latestPaid = candidates
+      .filter((cp) => cp.product.is_default !== true)
+      .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
+
+    if (latestPaid) {
+      sourceCusProduct = latestPaid as FullCusProduct;
+    } else if (!sourceCusProduct) {
+      // fall back to any default product if none selected
+      const latestDefault = candidates
+        .filter((cp) => cp.product.is_default === true)
+        .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
+      if (latestDefault) sourceCusProduct = latestDefault as FullCusProduct;
+    }
+  } catch {}
+
   freeTrial = disableFreeTrial ? null : freeTrial;
 
   if (carryOverTrial && curCusProduct?.free_trial) {
@@ -413,7 +438,7 @@ export const createFullCusProduct = async ({
   // 4. Get new rollovers (copy any existing rollover pockets from old plan)
   let rolloverOps = await getNewProductRollovers({
     db,
-    curCusProduct: curCusProduct as FullCusProduct,
+    curCusProduct: sourceCusProduct as FullCusProduct,
     cusEnts,
     entitlements,
     logger,
