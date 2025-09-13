@@ -2,6 +2,7 @@ import {
   AllowanceType,
   FeatureType,
   FullCusEntWithFullCusProduct,
+  EntInterval,
 } from "@autumn/shared";
 import { useCustomerContext } from "../CustomerContext";
 
@@ -22,6 +23,8 @@ export const CusEntBalance = ({
   const ent = cusEnt.entitlement;
   const feature = ent.feature;
   const rollovers = cusEnt.rollovers;
+  const showRollover =
+    ent.interval === EntInterval.Month || ent.interval === EntInterval.Year;
 
   if (feature.type == FeatureType.Boolean) {
     return <></>;
@@ -44,7 +47,7 @@ export const CusEntBalance = ({
       <BalanceWrapper>
         <p>
           {entityBalance}
-          {rolloverAmount > 0 && (
+          {showRollover && rolloverAmount > 0 && (
             <span className="text-t3">
               {" + "}
               {rolloverAmount} (rolled over)
@@ -76,7 +79,7 @@ export const CusEntBalance = ({
       <BalanceWrapper>
         <p>
           {totalBalance}
-          {rolloverAmount > 0 && (
+          {showRollover && rolloverAmount > 0 && (
             <span className="text-t3">
               {" + "}
               {rolloverAmount} (rolled over)
@@ -95,7 +98,7 @@ export const CusEntBalance = ({
     <BalanceWrapper>
       <p>
         {cusEnt.balance}
-        {rolloverAmount > 0 && (
+        {showRollover && rolloverAmount > 0 && (
           <span className="text-t3"> + {rolloverAmount} (rolled over)</span>
         )}
         {cusEnt.replaceables.length > 0 && (

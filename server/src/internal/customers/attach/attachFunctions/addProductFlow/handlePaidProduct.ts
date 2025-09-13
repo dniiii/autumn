@@ -228,6 +228,34 @@ export const handlePaidProduct = async ({
   }
   await Promise.all(batchInsert);
 
+  // If this was a restart (disableMerge) and there was a previous subscription,
+  // cancel the old subscription after the new one is successfully created and
+  // (ideally) paid to avoid overlap. Do not prorate and do not invoice now.
+  try {
+    if (
+      mergeSub &&
+      config.disableMerge &&
+      sub &&
+      typeof stripeCli?.subscriptions?.cancel === "function"
+    ) {
+      // Consider "active" or "trialing" as safe; also check invoice paid if expanded
+      const latestInvoice: any =
+        typeof sub.latest_invoice === "object" ? sub.latest_invoice : undefined;
+      const isPaid = latestInvoice?.status === "paid";
+      const isActiveOrTrial = sub.status === "active" || sub.status === "trialing";
+
+      if (isPaid || isActiveOrTrial) {
+        await stripeCli.subscriptions.cancel(mergeSub.id, {
+          prorate: false,
+          invoice_now: false,
+          cancellation_details: { comment: "autumn_restart_billing_cycle" },
+        } as any);
+      }
+    }
+  } catch (e) {
+    logger.warn("Failed to cancel previous subscription after restart", { e });
+  }
+
   if (res) {
     let apiVersion = attachParams.apiVersion || APIVersion.v1;
     const productNames = products.map((p) => p.name).join(", ");
