@@ -63,6 +63,17 @@ export const handlePaidProduct = async ({
     attachParams.freeTrial = null;
   }
 
+  // If caller explicitly wants Checkout (e.g. force_checkout), short-circuit
+  // to creating a Stripe Checkout Session instead of auto-creating subs.
+  if (config.onlyCheckout) {
+    return await handleCreateCheckout({
+      req,
+      res,
+      attachParams,
+      config,
+    });
+  }
+
   const itemSet = await getStripeSubItems2({
     attachParams,
     config,
