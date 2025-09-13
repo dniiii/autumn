@@ -49,9 +49,25 @@ export const getNewProductRollovers = async ({
         // Skip rollover operations for safety
         continue;
       }
-      let oldCusEnt = oldCusEnts.find(
-        (e) => e.entitlement.internal_feature_id === newEnt.internal_feature_id
+      // Prefer matching by internal_feature_id + interval (month/year) to avoid
+      // accidentally picking the daily entitlement. Fallback to same feature_id
+      // across monthly/yearly if exact interval match is missing.
+      const monthlyOrYearly = [EntInterval.Month, EntInterval.Year];
+      const candidates = oldCusEnts.filter(
+        (e) =>
+          e.entitlement.internal_feature_id === newEnt.internal_feature_id &&
+          (monthlyOrYearly as any).includes(e.entitlement.interval as any)
       );
+
+      let oldCusEnt = candidates.find(
+        (e) => e.entitlement.interval === newEnt.interval
+      );
+      if (!oldCusEnt) {
+        // pick the candidate with the largest remaining base as a sensible fallback
+        oldCusEnt = candidates.sort(
+          (a, b) => (Number(b.balance || 0) - Number(a.balance || 0))
+        )[0];
+      }
       let oldEnt = oldCusEnt?.entitlement;
 
       // Must have a corresponding old entitlement to carry forward from
