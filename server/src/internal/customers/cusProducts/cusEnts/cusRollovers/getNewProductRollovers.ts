@@ -10,6 +10,7 @@ import {
 import { RolloverService } from "./RolloverService.js";
 import { DrizzleCli } from "@/db/initDrizzle.js";
 import { calculateNextExpiry } from "./rolloverUtils.js";
+import { EntInterval } from "@autumn/shared";
 
 export const getNewProductRollovers = async ({
   curCusProduct,
@@ -43,12 +44,18 @@ export const getNewProductRollovers = async ({
     for (const newCusEnt of newCusEnts) {
       let newRollovers: Rollover[] = [];
       let newEnt = entitlements.find((e) => e.id === newCusEnt.entitlement_id);
+      if (!newEnt) {
+        // No matching entitlement definition for this new customer entitlement
+        // Skip rollover operations for safety
+        continue;
+      }
       let oldCusEnt = oldCusEnts.find(
-        (e) => e.entitlement.internal_feature_id === newEnt?.internal_feature_id
+        (e) => e.entitlement.internal_feature_id === newEnt.internal_feature_id
       );
       let oldEnt = oldCusEnt?.entitlement;
 
-      if (!oldCusEnt || !newEnt?.rollover) continue;
+      // Must have a corresponding old entitlement to carry forward from
+      if (!oldCusEnt) continue;
 
       // Do not handle case where user is upgrading from non-entity to entity or vice versa
       if (newEnt?.entity_feature_id && !oldEnt?.entity_feature_id) {
@@ -104,7 +111,9 @@ export const getNewProductRollovers = async ({
       //   }
       // }
 
-      let curRollovers = oldCusEnt.rollovers;
+      // 1) Always preserve existing rollover pockets from the old entitlement,
+      // even if the new entitlement doesn't define a rollover policy.
+      let curRollovers = oldCusEnt.rollovers || [];
 
       for (const curRollover of curRollovers) {
         newRollovers.push({
@@ -112,6 +121,47 @@ export const getNewProductRollovers = async ({
           id: generateId("roll"),
           cus_ent_id: newCusEnt.id,
         });
+      }
+
+      // 2) If there is leftover base balance on the old entitlement for
+      // monthly/yearly credits, convert that remainder into a rollover pocket
+      // on the new entitlement. Daily is explicitly excluded.
+      try {
+        const oldInterval = oldEnt?.interval;
+        const isMonthlyOrYearly =
+          oldInterval === EntInterval.Month || oldInterval === EntInterval.Year;
+
+        const leftoverBase = Math.max(0, Number(oldCusEnt.balance || 0));
+
+        if (isMonthlyOrYearly && leftoverBase > 0 && !oldEnt?.entity_feature_id) {
+          // Determine expiry: preserve the remainder of the old cycle when possible.
+          // If the old entitlement had a next_reset_at, use that exact timestamp so
+          // leftover credits keep their original remaining validity window.
+          // If not available, fall back to the new entitlement's next reset; and as
+          // a last resort, if the new entitlement defines a rollover policy, compute
+          // based on that policy.
+          const oldNextResetAt = (oldCusEnt as any).next_reset_at as number | null | undefined;
+          const newNextResetAt = (newCusEnt as any).next_reset_at as number | null | undefined;
+          // Prefer the new plan's rollover policy if enabled: align to the new
+          // plan's next reset and add its configured duration. Otherwise, fall
+          // back to preserving the remainder of the old cycle; lastly the new
+          // entitlement's next reset.
+          const expiresAt = newEnt?.rollover
+            ? calculateNextExpiry(newNextResetAt || Date.now(), newEnt.rollover)
+            : oldNextResetAt || newNextResetAt || null;
+
+          newRollovers.push({
+            id: generateId("roll"),
+            cus_ent_id: newCusEnt.id,
+            balance: leftoverBase,
+            usage: 0,
+            expires_at: expiresAt || null,
+            entities: {},
+          });
+        }
+      } catch (err) {
+        // best-effort; don't block attach on carryover computation issues
+        logger?.error?.("carryover_leftover_error", { err });
       }
 
       console.log(`Feature ${newEnt?.feature_id} rollovers:`, newRollovers);
