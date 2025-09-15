@@ -148,12 +148,20 @@ export const handleCusProductDeleted = async ({
     cusProducts,
   });
 
-  await activateDefaultProduct({
-    req,
-    productGroup: cusProduct.product.group,
-    fullCus,
-    curCusProduct: curMainProduct || undefined,
-  });
+  // Skip default activation if cancellation came from restart flow
+  const isRestartCancel =
+    subscription.cancellation_details?.comment === "autumn_restart_billing_cycle";
+
+  if (!isRestartCancel) {
+    await activateDefaultProduct({
+      req,
+      productGroup: cusProduct.product.group,
+      fullCus,
+      curCusProduct: curMainProduct || undefined,
+    });
+  } else {
+    logger.info(`Skipping default activation due to restart cancel`);
+  }
 
   // await cancelCusProductSubscriptions({
   //   cusProduct,

@@ -155,6 +155,22 @@ export const activateDefaultProduct = async ({
   curCusProduct?: FullCusProduct;
 }) => {
   const { db, org, env, logger } = req;
+  // Guard: if any non-add-on main in this group is already active, skip default attach
+  const hasAnotherActiveMain = fullCus.customer_products.some(
+    (cp) =>
+      !cp.product.is_add_on &&
+      !cp.product.is_default &&
+      cp.product.group === productGroup &&
+      (cp.status === CusProductStatus.Active ||
+        cp.status === CusProductStatus.PastDue ||
+        cp.status === CusProductStatus.Trialing)
+  );
+  if (hasAnotherActiveMain) {
+    logger.info(
+      `Skipping default activation for group ${productGroup}: another main is active`
+    );
+    return false;
+  }
   // 1. Expire current product
   const defaultProducts = await ProductService.listDefault({
     db,
