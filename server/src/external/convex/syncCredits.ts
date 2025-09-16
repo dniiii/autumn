@@ -261,29 +261,35 @@ export async function buildCreditsProjection({
     for (const [featureId, row] of Object.entries(featsObj)) {
       const e: any = row as any;
       const intervalStr = (e.interval || "unknown").toString().toLowerCase();
-      const interval = intervalStr === "daily" ? "day" : intervalStr === "yearly" ? "year" : intervalStr === "monthly" ? "month" : intervalStr;
+      const hasRollovers = Array.isArray(e.rollovers) && e.rollovers.length > 0;
+      const hasTopups = Array.isArray(e.topups) && e.topups.length > 0;
+      // Normalize interval to schema: day | month | year | lifetime
+      let interval: "day" | "month" | "year" | "lifetime";
+      if (intervalStr === "daily" || intervalStr === "day") interval = "day";
+      else if (intervalStr === "yearly" || intervalStr === "year") interval = "year";
+      else if (intervalStr === "monthly" || intervalStr === "month") interval = "month";
+      else if (!hasRollovers && hasTopups && !e.next_reset_at) interval = "lifetime";
+      else interval = "month"; // default normalization
       const type = e.unlimited === true || e.type === "boolean" ? "boolean" : "metered";
-      const pockets: any[] = Array.isArray(e.rollovers)
-        ? e.rollovers.map((r: any, idx: number) => ({
-            pocketId: r.id || `${featureId}-roll-${idx}`,
-            category: "rollover",
-            amount: Number(r.balance || r.amount || 0),
-            expiresAt: r.expires_at ? new Date(r.expires_at).toISOString() : undefined,
-            source: r.source || undefined,
-          }))
-        : [];
-      if (Array.isArray(e.topups)) {
-        for (let i = 0; i < e.topups.length; i++) {
-          const t = e.topups[i];
-          pockets.push({
-            pocketId: t.id || `${featureId}-top-${i}`,
-            category: "topup",
-            amount: Number(t.balance || t.amount || 0),
-            expiresAt: t.expires_at ? new Date(t.expires_at).toISOString() : undefined,
-            source: t.source || undefined,
-          });
-        }
-      }
+      // Daily entitlements should not carry pockets
+      const pockets: any[] = interval === "day"
+        ? []
+        : [
+            ...((Array.isArray(e.rollovers) ? e.rollovers : []).map((r: any, idx: number) => ({
+              pocketId: r.id || `${featureId}-roll-${idx}`,
+              category: "rollover" as const,
+              amount: Number(r.balance || r.amount || 0),
+              expiresAt: r.expires_at ? new Date(r.expires_at).toISOString() : undefined,
+              source: r.source || undefined,
+            })) as any[]),
+            ...((Array.isArray(e.topups) ? e.topups : []).map((t: any, i: number) => ({
+              pocketId: t.id || `${featureId}-top-${i}`,
+              category: "topup" as const,
+              amount: Number(t.balance || t.amount || 0),
+              expiresAt: t.expires_at ? new Date(t.expires_at).toISOString() : undefined,
+              source: t.source || undefined,
+            })) as any[]),
+          ];
       const pocketTotals = pockets.length
         ? pockets.reduce(
             (acc, p) => {
