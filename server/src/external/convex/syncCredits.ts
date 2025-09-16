@@ -4,6 +4,7 @@ import { CusService } from "@/internal/customers/CusService.js";
 import { FeatureService } from "@/internal/features/FeatureService.js";
 import { getCustomerDetails } from "@/internal/customers/cusUtils/getCustomerDetails.js";
 import { publishCreditsProjectionV2, CreditsPayloadV2 } from "./creditsPublisher.js";
+import { createHash } from "crypto";
 
 export async function buildCreditsProjection({
   db,
@@ -69,13 +70,13 @@ export async function buildCreditsProjection({
         const periodEnd = current.current_period_end ? new Date(current.current_period_end).toISOString() : undefined;
         activeMain = {
           productId: current.id,
-          name: current.name,
+          name: typeof current.name === "string" ? current.name : undefined,
           status: current.status,
-          group: current.group,
+          group: typeof current.group === "string" ? current.group : undefined,
           currentPeriodStart: periodStart,
           currentPeriodEnd: periodEnd,
           billingCycleAnchor: periodStart,
-          collectionMethod: current.collection_method,
+          collectionMethod: typeof current.collection_method === "string" ? current.collection_method : undefined,
         };
         if (/year|yearly/i.test(current.id)) subscriptionInterval = "year";
         else if (/month|monthly/i.test(current.id)) subscriptionInterval = "month";
@@ -85,8 +86,8 @@ export async function buildCreditsProjection({
         scheduledChange = {
           exists: true,
           productId: scheduled.id,
-          scheduledProductName: scheduled.name,
-          group: scheduled.group,
+          scheduledProductName: typeof scheduled.name === "string" ? scheduled.name : undefined,
+          group: typeof scheduled.group === "string" ? scheduled.group : undefined,
           scheduledAt: scheduled.created_at ? new Date(scheduled.created_at).toISOString() : undefined,
           effectiveAt: scheduled.starts_at ? new Date(scheduled.starts_at).toISOString() : undefined,
         };
@@ -258,6 +259,15 @@ export async function buildCreditsProjection({
   try {
     const featsObj = balancesObj as any;
     const ents: any[] = [];
+    const makeHash = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 16);
+    const makePocketId = (fields: Record<string, any>) => {
+      const key = Object.entries(fields)
+        .filter(([, v]) => v !== undefined && v !== null && v !== "")
+        .map(([k, v]) => `${k}=${String(v)}`)
+        .sort()
+        .join("|");
+      return makeHash(key);
+    };
     for (const [featureId, row] of Object.entries(featsObj)) {
       const e: any = row as any;
       const intervalStr = (e.interval || "unknown").toString().toLowerCase();
@@ -272,24 +282,52 @@ export async function buildCreditsProjection({
       else interval = "month"; // default normalization
       const type = e.unlimited === true || e.type === "boolean" ? "boolean" : "metered";
       // Daily entitlements should not carry pockets
-      const pockets: any[] = interval === "day"
-        ? []
-        : [
-            ...((Array.isArray(e.rollovers) ? e.rollovers : []).map((r: any, idx: number) => ({
-              pocketId: r.id || `${featureId}-roll-${idx}`,
-              category: "rollover" as const,
-              amount: Number(r.balance || r.amount || 0),
-              expiresAt: r.expires_at ? new Date(r.expires_at).toISOString() : undefined,
-              source: r.source || undefined,
-            })) as any[]),
-            ...((Array.isArray(e.topups) ? e.topups : []).map((t: any, i: number) => ({
-              pocketId: t.id || `${featureId}-top-${i}`,
-              category: "topup" as const,
-              amount: Number(t.balance || t.amount || 0),
-              expiresAt: t.expires_at ? new Date(t.expires_at).toISOString() : undefined,
-              source: t.source || undefined,
-            })) as any[]),
-          ];
+      const pockets: any[] = [];
+      const seen = new Set<string>();
+      if (interval !== "day") {
+        const rollArr = Array.isArray(e.rollovers) ? e.rollovers : [];
+        for (let idx = 0; idx < rollArr.length; idx++) {
+          const r = rollArr[idx];
+          const amount = Number(r.balance || r.amount || 0);
+          const expiresAtIso = r.expires_at ? new Date(r.expires_at).toISOString() : undefined;
+          const src = r.source || {};
+          const fromProductId = src.fromProductId || src.from_product_id || undefined;
+          const capturedAtIso = src.capturedAt
+            ? new Date(src.capturedAt).toISOString()
+            : r.captured_at
+              ? new Date(r.captured_at).toISOString()
+              : undefined;
+          const pid = r.id || makePocketId({ featureId, category: "rollover", amount, expiresAt: expiresAtIso, fromProductId, capturedAt: capturedAtIso });
+          if (seen.has(pid)) continue;
+          seen.add(pid);
+          pockets.push({
+            pocketId: pid,
+            category: "rollover" as const,
+            amount,
+            expiresAt: expiresAtIso,
+            source: { fromProductId, capturedAt: capturedAtIso },
+          });
+        }
+        const topArr = Array.isArray(e.topups) ? e.topups : [];
+        for (let i = 0; i < topArr.length; i++) {
+          const t = topArr[i];
+          const amount = Number(t.balance || t.amount || 0);
+          const expiresAtIso = t.expires_at ? new Date(t.expires_at).toISOString() : undefined;
+          const invoiceId = t.invoiceId || t.invoice_id || undefined;
+          const checkoutSessionId = t.checkoutSessionId || t.checkout_session_id || undefined;
+          const capturedAtIso = t.capturedAt ? new Date(t.capturedAt).toISOString() : undefined;
+          const pid = t.id || invoiceId || checkoutSessionId || makePocketId({ featureId, category: "topup", amount, capturedAt: capturedAtIso });
+          if (seen.has(pid)) continue;
+          seen.add(pid);
+          pockets.push({
+            pocketId: pid,
+            category: "topup" as const,
+            amount,
+            expiresAt: expiresAtIso,
+            source: { invoiceId, checkoutSessionId, capturedAt: capturedAtIso },
+          });
+        }
+      }
       const pocketTotals = pockets.length
         ? pockets.reduce(
             (acc, p) => {
@@ -302,14 +340,14 @@ export async function buildCreditsProjection({
         : undefined;
       ents.push({
         featureId,
-        label: e.label,
+        label: typeof e.label === "string" ? e.label : undefined,
         type,
         interval,
         allowance: typeof e.allowance === "number" ? e.allowance : undefined,
         used: typeof e.used === "number" ? e.used : undefined,
         available: Number(e.balance || 0),
         nextResetAt: e.next_reset_at ? new Date(e.next_reset_at).toISOString() : undefined,
-        unit: e.unit,
+        unit: typeof e.unit === "string" ? e.unit : undefined,
         rolloverPolicy: e.rollover ? { enabled: true, expiryMonths: e.rollover?.months || undefined, capPerMonth: e.rollover?.cap || undefined } : undefined,
         pockets,
         pocketTotals,
