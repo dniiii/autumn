@@ -1,5 +1,5 @@
 import { DrizzleCli } from "@/db/initDrizzle.js";
-import { AppEnv, Organization, APIVersion } from "@autumn/shared";
+import { AppEnv, Organization, APIVersion, CusExpand } from "@autumn/shared";
 import { CusService } from "@/internal/customers/CusService.js";
 import { FeatureService } from "@/internal/features/FeatureService.js";
 import { getCustomerDetails } from "@/internal/customers/cusUtils/getCustomerDetails.js";
@@ -38,7 +38,7 @@ export async function buildCreditsProjection({
     env,
     logger,
     cusProducts: customer.customer_products,
-    expand: [],
+    expand: [CusExpand.PaymentMethod],
     reqApiVersion: APIVersion.v1_2,
   });
   const balancesObj = cusDetails.customer?.features || cusDetails.features || {};
@@ -245,7 +245,7 @@ export async function buildCreditsProjection({
     hasActiveSubscription: Boolean(
       activeMain && ["active", "pastdue", "past_due", "trialing"].includes(String(activeMain.status).toLowerCase())
     ),
-    isDowngradeScheduled: false,
+    isDowngradeScheduled: Boolean((scheduledChange as any)?.exists && String((scheduledChange as any).productId || "").includes("free")),
     subscriptionTierId,
     subscriptionInterval,
     subscriptionProductId,
@@ -430,6 +430,19 @@ export async function buildCreditsProjection({
       }
     }
     v2.entitlements = ents;
+  } catch {}
+
+  // Ensure scheduled effectiveAt is set for UI if we know the cycle end
+  try {
+    if (v2.subscription?.scheduledChange?.exists && !v2.subscription.scheduledChange.effectiveAt) {
+      v2.subscription.scheduledChange.effectiveAt = v2.subscription.activeMain?.currentPeriodEnd || v2.resets?.nextSubscriptionReset;
+    }
+  } catch {}
+
+  // requiresPaymentMethod from customer payment_method expansion
+  try {
+    const pm = (cusDetails as any)?.customer?.payment_method || (cusDetails as any)?.payment_method;
+    v2.requiresPaymentMethod = pm ? false : true;
   } catch {}
 
   return v2 as CreditsPayloadV2 & { userId: string };
