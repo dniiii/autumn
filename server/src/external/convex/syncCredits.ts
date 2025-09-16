@@ -221,7 +221,9 @@ export async function buildCreditsProjection({
     entityId: customer.entity?.id || undefined,
     updatedAt: Date.now(),
 
-    hasActiveSubscription: Boolean(activeMain && ["Active", "PastDue", "Trialing"].includes(activeMain.status)),
+    hasActiveSubscription: Boolean(
+      activeMain && ["active", "pastdue", "past_due", "trialing"].includes(String(activeMain.status).toLowerCase())
+    ),
     isDowngradeScheduled: false,
     subscriptionTierId,
     subscriptionInterval,
@@ -330,13 +332,30 @@ export async function buildCreditsProjection({
       }
       // Build sub-entries per-interval if breakdown exists; otherwise single entry
       const breakdownArr = Array.isArray(e.breakdown) ? e.breakdown : null;
-      const parts = breakdownArr
+      let parts = breakdownArr
         ? breakdownArr.map((b: any) => ({
             interval: (b.interval || "unknown").toString().toLowerCase(),
             available: Number(b.balance || 0),
             nextResetAt: b.next_reset_at ? new Date(b.next_reset_at).toISOString() : undefined,
           }))
-        : [{ interval: intervalStr, available: Number(e.balance || 0), nextResetAt: e.next_reset_at ? new Date(e.next_reset_at).toISOString() : undefined }];
+        : undefined;
+
+      if (!parts) {
+        const totalAvail = Number(e.balance || 0);
+        // If daily exists but breakdown missing, split into day + month/year parts
+        if ((interval === "month" || interval === "year") && dailyAvailable > 0 && totalAvail >= dailyAvailable) {
+          parts = [
+            { interval: "day", available: dailyAvailable, nextResetAt: nextDailyResetIso },
+            {
+              interval: interval,
+              available: totalAvail - dailyAvailable,
+              nextResetAt: e.next_reset_at ? new Date(e.next_reset_at).toISOString() : nextMonthlyResetIso,
+            },
+          ];
+        } else {
+          parts = [{ interval: intervalStr, available: totalAvail, nextResetAt: e.next_reset_at ? new Date(e.next_reset_at).toISOString() : undefined }];
+        }
+      }
 
       for (const part of parts) {
         let partInterval: "day" | "month" | "year" | "lifetime";
