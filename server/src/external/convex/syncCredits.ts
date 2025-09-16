@@ -286,6 +286,7 @@ export async function buildCreditsProjection({
       // Build pockets once (only relevant for month/year)
       const pocketsAll: any[] = [];
       const seen = new Set<string>();
+      let topupTotal = 0;
       if (interval !== "day") {
         const rollArr = Array.isArray(e.rollovers) ? e.rollovers : [];
         for (let idx = 0; idx < rollArr.length; idx++) {
@@ -314,6 +315,7 @@ export async function buildCreditsProjection({
         for (let i = 0; i < topArr.length; i++) {
           const t = topArr[i];
           const amount = Number(t.balance || t.amount || 0);
+          topupTotal += amount;
           const expiresAtIso = t.expires_at ? new Date(t.expires_at).toISOString() : undefined;
           const invoiceId = t.invoiceId || t.invoice_id || undefined;
           const checkoutSessionId = t.checkoutSessionId || t.checkout_session_id || undefined;
@@ -366,8 +368,14 @@ export async function buildCreditsProjection({
         if (part.interval === "daily" || part.interval === "day") partInterval = "day";
         else if (part.interval === "yearly" || part.interval === "year") partInterval = "year";
         else if (part.interval === "monthly" || part.interval === "month") partInterval = "month";
+        else if (!part.nextResetAt) partInterval = "lifetime"; // unknown with no reset -> lifetime
         else if (!hasRollovers && hasTopups && !e.next_reset_at) partInterval = "lifetime";
         else partInterval = interval; // fallback to overall normalization
+
+        // If this part looks like pure top-ups (no reset and equals total topups), mark as lifetime
+        if ((partInterval === "month" || partInterval === "year") && !part.nextResetAt && topupTotal > 0 && Math.abs(part.available - topupTotal) < 1e-6) {
+          partInterval = "lifetime";
+        }
 
         // Only attach pockets to the first month/year part to prevent duplicates
         const canHavePockets = partInterval === "month" || partInterval === "year";
