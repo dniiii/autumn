@@ -60,9 +60,11 @@ export async function buildCreditsProjection({
       : [];
     const mains = productsResp.filter((p: any) => p && p.is_add_on === false);
     if (mains.length > 0) {
-      const byPriority = (p: any) =>
-        p.status === "Active" ? 0 : p.status === "PastDue" ? 1 : 2;
-      const current = [...mains].sort((a, b) => byPriority(a) - byPriority(b))[0];
+      // Choose only from Active/PastDue/Trialing for active main
+      const isActiveLike = (s: any) => ["active", "pastdue", "past_due", "trialing"].includes(String(s).toLowerCase());
+      const activePool = mains.filter((p: any) => isActiveLike(p.status));
+      const byPriority = (p: any) => (String(p.status).toLowerCase() === "active" ? 0 : 1);
+      const current = activePool.length > 0 ? [...activePool].sort((a, b) => byPriority(a) - byPriority(b))[0] : undefined;
       if (current) {
         subscriptionTierId = (current.id || "free").replace(/_(monthly|yearly|year)$/i, "");
         subscriptionProductId = current.id;
@@ -81,7 +83,7 @@ export async function buildCreditsProjection({
         if (/year|yearly/i.test(current.id)) subscriptionInterval = "year";
         else if (/month|monthly/i.test(current.id)) subscriptionInterval = "month";
       }
-      const scheduled = productsResp.find((p: any) => p && p.is_add_on === false && p.status === "Scheduled");
+      const scheduled = productsResp.find((p: any) => p && p.is_add_on === false && String(p.status).toLowerCase() === "scheduled");
       if (scheduled) {
         scheduledChange = {
           exists: true,
@@ -94,6 +96,25 @@ export async function buildCreditsProjection({
       }
     }
   } catch {}
+
+  // Fallback: if no scheduled found via processed products, scan raw customer_products
+  if (!scheduledChange?.exists) {
+    try {
+      const schedCp = (customer.customer_products || []).find(
+        (cp: any) => cp && cp.product && cp.product.is_add_on === false && String(cp.status).toLowerCase() === "scheduled"
+      );
+      if (schedCp) {
+        scheduledChange = {
+          exists: true,
+          productId: schedCp.product.id,
+          scheduledProductName: schedCp.product.name,
+          group: schedCp.product.group,
+          scheduledAt: schedCp.created_at ? new Date(schedCp.created_at).toISOString() : undefined,
+          effectiveAt: schedCp.starts_at ? new Date(schedCp.starts_at).toISOString() : undefined,
+        };
+      }
+    } catch {}
+  }
 
   // Intervals and rollovers (best-effort from feature responses)
   let intervals: any[] | undefined;
