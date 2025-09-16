@@ -3,7 +3,7 @@ import { AppEnv, Organization, APIVersion } from "@autumn/shared";
 import { CusService } from "@/internal/customers/CusService.js";
 import { FeatureService } from "@/internal/features/FeatureService.js";
 import { getCustomerDetails } from "@/internal/customers/cusUtils/getCustomerDetails.js";
-import { publishCreditsProjection, CreditsPayload } from "./creditsPublisher.js";
+import { publishCreditsProjectionV2, CreditsPayloadV2 } from "./creditsPublisher.js";
 
 export async function buildCreditsProjection({
   db,
@@ -19,7 +19,7 @@ export async function buildCreditsProjection({
   customerId: string;
   entityId?: string;
   logger?: any;
-}): Promise<CreditsPayload & { userId: string }> {
+}): Promise<CreditsPayloadV2 & { userId: string }> {
   const customer = await CusService.getFull({
     db,
     idOrInternalId: customerId,
@@ -44,10 +44,14 @@ export async function buildCreditsProjection({
   const entries = Object.values(balancesObj as any);
   const total = entries.reduce((acc: number, e: any) => acc + (e.balance ?? 0), 0);
 
-  // Best-effort subscription info (optional fields)
-  let subscriptionTier: string | undefined;
-  let subscriptionStatus: string | undefined;
-  let subscriptionExpiry: string | undefined;
+  // v2 fields: active main & scheduled change
+  let activeMain: any | undefined;
+  let scheduledChange: any = { exists: false };
+  let subscriptionTierId = "free";
+  let subscriptionInterval: "month" | "year" | undefined;
+  let subscriptionProductId: string | undefined;
+  let subscriptionCurrency: string | undefined;
+  let subscriptionPriceCents: number | undefined;
   try {
     // Prefer using processed customer details which already separate add-ons
     const productsResp = Array.isArray((cusDetails as any).products)
@@ -55,18 +59,37 @@ export async function buildCreditsProjection({
       : [];
     const mains = productsResp.filter((p: any) => p && p.is_add_on === false);
     if (mains.length > 0) {
-      // Prefer Active, then PastDue, else most recent
       const byPriority = (p: any) =>
         p.status === "Active" ? 0 : p.status === "PastDue" ? 1 : 2;
-      const activeOrRecent = [...mains].sort(
-        (a, b) => byPriority(a) - byPriority(b),
-      )[0];
-      if (activeOrRecent) {
-        subscriptionTier = activeOrRecent.id;
-        subscriptionStatus = activeOrRecent.status;
-        subscriptionExpiry = activeOrRecent.current_period_end
-          ? new Date(activeOrRecent.current_period_end).toISOString()
-          : undefined;
+      const current = [...mains].sort((a, b) => byPriority(a) - byPriority(b))[0];
+      if (current) {
+        subscriptionTierId = (current.id || "free").replace(/_(monthly|yearly|year)$/i, "");
+        subscriptionProductId = current.id;
+        const periodStart = current.current_period_start ? new Date(current.current_period_start).toISOString() : undefined;
+        const periodEnd = current.current_period_end ? new Date(current.current_period_end).toISOString() : undefined;
+        activeMain = {
+          productId: current.id,
+          name: current.name,
+          status: current.status,
+          group: current.group,
+          currentPeriodStart: periodStart,
+          currentPeriodEnd: periodEnd,
+          billingCycleAnchor: periodStart,
+          collectionMethod: current.collection_method,
+        };
+        if (/year|yearly/i.test(current.id)) subscriptionInterval = "year";
+        else if (/month|monthly/i.test(current.id)) subscriptionInterval = "month";
+      }
+      const scheduled = productsResp.find((p: any) => p && p.is_add_on === false && p.status === "Scheduled");
+      if (scheduled) {
+        scheduledChange = {
+          exists: true,
+          productId: scheduled.id,
+          scheduledProductName: scheduled.name,
+          group: scheduled.group,
+          scheduledAt: scheduled.created_at ? new Date(scheduled.created_at).toISOString() : undefined,
+          effectiveAt: scheduled.starts_at ? new Date(scheduled.starts_at).toISOString() : undefined,
+        };
       }
     }
   } catch {}
@@ -190,27 +213,106 @@ export async function buildCreditsProjection({
       }
     }
   } catch {}
-  return {
+  // Build v2 doc
+  const v2: any = {
+    version: 2,
     userId: customer.id!,
-    balance: total,
-    subscriptionTier,
-    subscriptionStatus,
-    subscriptionExpiry,
-    intervals,
-    rolloverExpiries,
-    rolloverGroups,
-    breakdown: {
-      dailyFree: dailyAvailable ? { available: dailyAvailable } : undefined,
-      subscription: subscriptionAvailable ? { available: subscriptionAvailable } : undefined,
-      purchased: purchasedAvailable ? { available: purchasedAvailable } : undefined,
+    entityId: customer.entity?.id || undefined,
+    updatedAt: Date.now(),
+
+    hasActiveSubscription: Boolean(activeMain && ["Active", "PastDue", "Trialing"].includes(activeMain.status)),
+    isDowngradeScheduled: false,
+    subscriptionTierId,
+    subscriptionInterval,
+    subscriptionProductId,
+    subscriptionCurrency,
+    subscriptionPriceCents,
+
+    subscription: {
+      activeMain,
+      scheduledChange,
+    },
+
+    // Entitlements/pockets are derived below; if not available, keep empty
+    entitlements: [],
+
+    totals: {
+      daily: dailyAvailable,
+      subscription: subscriptionAvailable,
+      lifetime: purchasedAvailable,
     },
     resets: {
       nextDailyReset: nextDailyResetIso,
-      nextMonthlyReset: nextMonthlyResetIso,
+      nextSubscriptionReset: nextMonthlyResetIso,
       nextRolloverExpiry: rolloverExpiries && rolloverExpiries.length > 0 ? rolloverExpiries[0] : undefined,
     },
-    updatedAt: Date.now(),
-  };
+    upcoming: {
+      rolloverExpiries: Array.isArray(intervals?.find((x: any) => x?.type === "rollovers")?.rollovers)
+        ? (intervals!.find((x: any) => x?.type === "rollovers")!.rollovers as any[])
+            .map((r: any) => ({ iso: r.iso || r.date || r, amount: r.amount || 0, pocketCount: r.pocketCount || 1 }))
+        : [],
+    },
+  } as CreditsPayloadV2;
+
+  // Map entitlements and pockets best-effort from balances object
+  try {
+    const featsObj = balancesObj as any;
+    const ents: any[] = [];
+    for (const [featureId, row] of Object.entries(featsObj)) {
+      const e: any = row as any;
+      const intervalStr = (e.interval || "unknown").toString().toLowerCase();
+      const interval = intervalStr === "daily" ? "day" : intervalStr === "yearly" ? "year" : intervalStr === "monthly" ? "month" : intervalStr;
+      const type = e.unlimited === true || e.type === "boolean" ? "boolean" : "metered";
+      const pockets: any[] = Array.isArray(e.rollovers)
+        ? e.rollovers.map((r: any, idx: number) => ({
+            pocketId: r.id || `${featureId}-roll-${idx}`,
+            category: "rollover",
+            amount: Number(r.balance || r.amount || 0),
+            expiresAt: r.expires_at ? new Date(r.expires_at).toISOString() : undefined,
+            source: r.source || undefined,
+          }))
+        : [];
+      if (Array.isArray(e.topups)) {
+        for (let i = 0; i < e.topups.length; i++) {
+          const t = e.topups[i];
+          pockets.push({
+            pocketId: t.id || `${featureId}-top-${i}`,
+            category: "topup",
+            amount: Number(t.balance || t.amount || 0),
+            expiresAt: t.expires_at ? new Date(t.expires_at).toISOString() : undefined,
+            source: t.source || undefined,
+          });
+        }
+      }
+      const pocketTotals = pockets.length
+        ? pockets.reduce(
+            (acc, p) => {
+              if (p.category === "rollover") acc.rollover += p.amount || 0;
+              else if (p.category === "topup") acc.topup += p.amount || 0;
+              return acc;
+            },
+            { rollover: 0, topup: 0 }
+          )
+        : undefined;
+      ents.push({
+        featureId,
+        label: e.label,
+        type,
+        interval,
+        allowance: typeof e.allowance === "number" ? e.allowance : undefined,
+        used: typeof e.used === "number" ? e.used : undefined,
+        available: Number(e.balance || 0),
+        nextResetAt: e.next_reset_at ? new Date(e.next_reset_at).toISOString() : undefined,
+        unit: e.unit,
+        rolloverPolicy: e.rollover ? { enabled: true, expiryMonths: e.rollover?.months || undefined, capPerMonth: e.rollover?.cap || undefined } : undefined,
+        pockets,
+        pocketTotals,
+      });
+    }
+    v2.entitlements = ents;
+  } catch {}
+
+  return v2 as CreditsPayloadV2 & { userId: string };
 }
 
 export async function syncCreditsToConvex(args: {
@@ -222,8 +324,13 @@ export async function syncCreditsToConvex(args: {
   logger?: any;
 }) {
   try {
-    const { userId, ...payload } = await buildCreditsProjection(args);
-    await publishCreditsProjection({ userId, payload, logger: args.logger });
+    const v2 = await buildCreditsProjection(args);
+    await publishCreditsProjectionV2({
+      userId: v2.userId,
+      entityId: v2.entityId,
+      payload: v2,
+      logger: args.logger,
+    });
   } catch (e) {
     // eslint-disable-next-line no-console
     if (args.logger?.warn) {
