@@ -46,6 +46,13 @@ export const cancelImmediately = async ({
         comment: "autumn_cancel",
       },
     });
+  } else {
+    // If the Stripe subscription no longer exists, clear stale subscription_ids to unblock expiry
+    await CusProductService.update({
+      db,
+      cusProductId: cusProduct.id,
+      updates: { subscription_ids: [] },
+    });
   }
 
   const isMain = !cusProduct.product.is_add_on;

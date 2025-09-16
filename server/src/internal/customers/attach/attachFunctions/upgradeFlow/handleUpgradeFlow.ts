@@ -99,7 +99,7 @@ export const handleUpgradeFlow = async ({
   if (!curSub) {
     logger.info("UPGRADE FLOW: no sub (from cancel maybe...?)");
     // Do something about current sub...
-  } else if (shouldCancelSub({ sub: curSub!, newSubItems: subItems })) {
+  } else if (curSub && shouldCancelSub({ sub: curSub!, newSubItems: subItems })) {
     logger.info(
       `UPGRADE FLOW: canceling sub ${curSub!.id}, proration: ${config.proration}`
     );
@@ -158,7 +158,8 @@ export const handleUpgradeFlow = async ({
     db: req.db,
     cusProductId: curCusProduct!.id,
     updates: {
-      subscription_ids: canceled ? undefined : [],
+      // If we canceled the Stripe sub or it was missing, clear stale ids
+      subscription_ids: canceled || !curSub ? [] : [],
       status: CusProductStatus.Expired,
     },
   });

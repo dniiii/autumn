@@ -162,12 +162,28 @@ export const cusProductToSchedule = async ({
     return null;
   }
 
-  const schedule = await stripeCli.subscriptionSchedules.retrieve(
-    subScheduleIds[0],
-    {
-      expand: ["phases.items.price"],
+  let schedule: any;
+  try {
+    schedule = await stripeCli.subscriptionSchedules.retrieve(
+      subScheduleIds[0],
+      {
+        expand: ["phases.items.price"],
+      }
+    );
+  } catch (error: any) {
+    // Gracefully handle missing schedule
+    const msg = error?.message || "";
+    const code = error?.raw?.code;
+    const status = error?.statusCode;
+    if (
+      /No such subscription schedule/i.test(msg) ||
+      code === "resource_missing" ||
+      status === 404
+    ) {
+      return undefined;
     }
-  );
+    throw error;
+  }
 
   if (schedule.status == "canceled" || schedule.status == "released") {
     return undefined;
@@ -187,11 +203,21 @@ export const cusProductToSub = async ({
   if (!subId) {
     return undefined;
   }
-  const sub = await stripeCli.subscriptions.retrieve(subId, {
-    expand: ["items.data.price.tiers", "discounts.coupon.applies_to"],
-  });
-
-  return sub;
+  try {
+    const sub = await stripeCli.subscriptions.retrieve(subId, {
+      expand: ["items.data.price.tiers", "discounts.coupon.applies_to"],
+    });
+    return sub;
+  } catch (error: any) {
+    // Gracefully handle missing subscription
+    const msg = error?.message || "";
+    const code = error?.raw?.code;
+    const status = error?.statusCode;
+    if (/No such subscription/i.test(msg) || code === "resource_missing" || status === 404) {
+      return undefined;
+    }
+    throw error;
+  }
 };
 
 export const cusProductsToStripeSubs = ({

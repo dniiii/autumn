@@ -67,11 +67,20 @@ export const getSubForAttach = async ({
   subId: string;
   stripeCli: Stripe;
 }) => {
-  const sub = await stripeCli.subscriptions.retrieve(subId, {
-    expand: ["items.data.price.tiers"],
-  });
-
-  return sub;
+  try {
+    const sub = await stripeCli.subscriptions.retrieve(subId, {
+      expand: ["items.data.price.tiers"],
+    });
+    return sub;
+  } catch (error: any) {
+    const msg = error?.message || "";
+    const code = error?.raw?.code;
+    const status = error?.statusCode;
+    if (/No such subscription/i.test(msg) || code === "resource_missing" || status === 404) {
+      return undefined as any;
+    }
+    throw error;
+  }
 };
 
 export const getCustomerSub = async ({
@@ -149,15 +158,24 @@ export const getCustomerSub = async ({
   //   return { sub: undefined, cusProduct: undefined };
   // }
 
-  const sub = await stripeCli.subscriptions.retrieve(subId, {
-    expand: [
-      "items.data.price.tiers",
-      "discounts.coupon.applies_to",
-      "latest_invoice",
-    ],
-  });
-
-  return { subId, sub, cusProduct };
+  try {
+    const sub = await stripeCli.subscriptions.retrieve(subId, {
+      expand: [
+        "items.data.price.tiers",
+        "discounts.coupon.applies_to",
+        "latest_invoice",
+      ],
+    });
+    return { subId, sub, cusProduct };
+  } catch (error: any) {
+    const msg = error?.message || "";
+    const code = error?.raw?.code;
+    const status = error?.statusCode;
+    if (/No such subscription/i.test(msg) || code === "resource_missing" || status === 404) {
+      return { subId, sub: undefined as any, cusProduct };
+    }
+    throw error;
+  }
 };
 
 export const paramsToCurSub = async ({
@@ -173,15 +191,24 @@ export const paramsToCurSub = async ({
     return undefined;
   }
 
-  const sub = await stripeCli.subscriptions.retrieve(subIds[0], {
-    expand: [
-      "items.data.price.tiers",
-      "latest_invoice",
-      "discounts.coupon.applies_to",
-    ],
-  });
-
-  return sub;
+  try {
+    const sub = await stripeCli.subscriptions.retrieve(subIds[0], {
+      expand: [
+        "items.data.price.tiers",
+        "latest_invoice",
+        "discounts.coupon.applies_to",
+      ],
+    });
+    return sub;
+  } catch (error: any) {
+    const msg = error?.message || "";
+    const code = error?.raw?.code;
+    const status = error?.statusCode;
+    if (/No such subscription/i.test(msg) || code === "resource_missing" || status === 404) {
+      return undefined as any;
+    }
+    throw error;
+  }
 };
 
 export const paramsToCurSubSchedule = async ({
@@ -197,12 +224,23 @@ export const paramsToCurSubSchedule = async ({
     return undefined;
   }
 
-  const schedule = await stripeCli.subscriptionSchedules.retrieve(
-    subScheduleIds[0],
-    {
-      expand: ["phases.items.price"],
+  let schedule: any;
+  try {
+    schedule = await stripeCli.subscriptionSchedules.retrieve(
+      subScheduleIds[0],
+      {
+        expand: ["phases.items.price"],
+      }
+    );
+  } catch (error: any) {
+    const msg = error?.message || "";
+    const code = error?.raw?.code;
+    const status = error?.statusCode;
+    if (/No such subscription schedule/i.test(msg) || code === "resource_missing" || status === 404) {
+      return undefined;
     }
-  );
+    throw error;
+  }
 
   if (schedule.status == "canceled") {
     return undefined;

@@ -363,6 +363,27 @@ export const activateFutureProduct = async ({
     return false;
   }
 
+  // Guard: if another non-add-on main in this group is already active, skip activating scheduled
+  const actives = await CusProductService.list({
+    db,
+    internalCustomerId: cusProduct.internal_customer_id,
+    inStatuses: [CusProductStatus.Active, CusProductStatus.PastDue, CusProductStatus.Trialing],
+  });
+  const hasAnotherActiveMain = actives.some(
+    (cp) =>
+      !cp.product.is_add_on &&
+      cp.product.group === cusProduct.product.group &&
+      cp.id !== futureProduct!.id
+  );
+  if (hasAnotherActiveMain) {
+    logger.info(
+      `Skipping activation of scheduled product ${futureProduct.id}: another main is active in group ${cusProduct.product.group}`
+    );
+    // Clean up the scheduled record to avoid future duplicate activation
+    await CusProductService.delete({ db, cusProductId: futureProduct.id });
+    return false;
+  }
+
   await CusProductService.update({
     db,
     cusProductId: futureProduct.id,
