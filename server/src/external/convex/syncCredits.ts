@@ -281,8 +281,8 @@ export async function buildCreditsProjection({
       else if (!hasRollovers && hasTopups && !e.next_reset_at) interval = "lifetime";
       else interval = "month"; // default normalization
       const type = e.unlimited === true || e.type === "boolean" ? "boolean" : "metered";
-      // Daily entitlements should not carry pockets
-      const pockets: any[] = [];
+      // Build pockets once (only relevant for month/year)
+      const pocketsAll: any[] = [];
       const seen = new Set<string>();
       if (interval !== "day") {
         const rollArr = Array.isArray(e.rollovers) ? e.rollovers : [];
@@ -300,7 +300,7 @@ export async function buildCreditsProjection({
           const pid = r.id || makePocketId({ featureId, category: "rollover", amount, expiresAt: expiresAtIso, fromProductId, capturedAt: capturedAtIso });
           if (seen.has(pid)) continue;
           seen.add(pid);
-          pockets.push({
+          pocketsAll.push({
             pocketId: pid,
             category: "rollover" as const,
             amount,
@@ -319,7 +319,7 @@ export async function buildCreditsProjection({
           const pid = t.id || invoiceId || checkoutSessionId || makePocketId({ featureId, category: "topup", amount, capturedAt: capturedAtIso });
           if (seen.has(pid)) continue;
           seen.add(pid);
-          pockets.push({
+          pocketsAll.push({
             pocketId: pid,
             category: "topup" as const,
             amount,
@@ -328,30 +328,51 @@ export async function buildCreditsProjection({
           });
         }
       }
-      const pocketTotals = pockets.length
-        ? pockets.reduce(
-            (acc, p) => {
-              if (p.category === "rollover") acc.rollover += p.amount || 0;
-              else if (p.category === "topup") acc.topup += p.amount || 0;
-              return acc;
-            },
-            { rollover: 0, topup: 0 }
-          )
-        : undefined;
-      ents.push({
-        featureId,
-        label: typeof e.label === "string" ? e.label : undefined,
-        type,
-        interval,
-        allowance: typeof e.allowance === "number" ? e.allowance : undefined,
-        used: typeof e.used === "number" ? e.used : undefined,
-        available: Number(e.balance || 0),
-        nextResetAt: e.next_reset_at ? new Date(e.next_reset_at).toISOString() : undefined,
-        unit: typeof e.unit === "string" ? e.unit : undefined,
-        rolloverPolicy: e.rollover ? { enabled: true, expiryMonths: e.rollover?.months || undefined, capPerMonth: e.rollover?.cap || undefined } : undefined,
-        pockets,
-        pocketTotals,
-      });
+      // Build sub-entries per-interval if breakdown exists; otherwise single entry
+      const breakdownArr = Array.isArray(e.breakdown) ? e.breakdown : null;
+      const parts = breakdownArr
+        ? breakdownArr.map((b: any) => ({
+            interval: (b.interval || "unknown").toString().toLowerCase(),
+            available: Number(b.balance || 0),
+            nextResetAt: b.next_reset_at ? new Date(b.next_reset_at).toISOString() : undefined,
+          }))
+        : [{ interval: intervalStr, available: Number(e.balance || 0), nextResetAt: e.next_reset_at ? new Date(e.next_reset_at).toISOString() : undefined }];
+
+      for (const part of parts) {
+        let partInterval: "day" | "month" | "year" | "lifetime";
+        if (part.interval === "daily" || part.interval === "day") partInterval = "day";
+        else if (part.interval === "yearly" || part.interval === "year") partInterval = "year";
+        else if (part.interval === "monthly" || part.interval === "month") partInterval = "month";
+        else if (!hasRollovers && hasTopups && !e.next_reset_at) partInterval = "lifetime";
+        else partInterval = interval; // fallback to overall normalization
+
+        const pocketsForPart = partInterval === "month" || partInterval === "year" ? pocketsAll : [];
+        const pocketTotals = pocketsForPart.length
+          ? pocketsForPart.reduce(
+              (acc, p) => {
+                if (p.category === "rollover") acc.rollover += p.amount || 0;
+                else if (p.category === "topup") acc.topup += p.amount || 0;
+                return acc;
+              },
+              { rollover: 0, topup: 0 }
+            )
+          : undefined;
+
+        ents.push({
+          featureId,
+          label: typeof e.label === "string" ? e.label : undefined,
+          type,
+          interval: partInterval,
+          allowance: typeof e.allowance === "number" ? e.allowance : undefined,
+          used: typeof e.used === "number" ? e.used : undefined,
+          available: part.available,
+          nextResetAt: part.nextResetAt,
+          unit: typeof e.unit === "string" ? e.unit : undefined,
+          rolloverPolicy: e.rollover ? { enabled: true, expiryMonths: e.rollover?.months || undefined, capPerMonth: e.rollover?.cap || undefined } : undefined,
+          pockets: pocketsForPart,
+          pocketTotals,
+        });
+      }
     }
     v2.entitlements = ents;
   } catch {}
