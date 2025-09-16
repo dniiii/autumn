@@ -357,6 +357,10 @@ export async function buildCreditsProjection({
         }
       }
 
+      // Drop zero/negative parts to avoid duplicate empty rows
+      parts = parts.filter((p: any) => (p.available || 0) > 0);
+
+      let monthYearPocketsAssigned = false;
       for (const part of parts) {
         let partInterval: "day" | "month" | "year" | "lifetime";
         if (part.interval === "daily" || part.interval === "day") partInterval = "day";
@@ -365,7 +369,10 @@ export async function buildCreditsProjection({
         else if (!hasRollovers && hasTopups && !e.next_reset_at) partInterval = "lifetime";
         else partInterval = interval; // fallback to overall normalization
 
-        const pocketsForPart = partInterval === "month" || partInterval === "year" ? pocketsAll : [];
+        // Only attach pockets to the first month/year part to prevent duplicates
+        const canHavePockets = partInterval === "month" || partInterval === "year";
+        const pocketsForPart = canHavePockets && !monthYearPocketsAssigned ? pocketsAll : [];
+        if (canHavePockets && pocketsForPart.length > 0) monthYearPocketsAssigned = true;
         const pocketTotals = pocketsForPart.length
           ? pocketsForPart.reduce(
               (acc, p) => {
