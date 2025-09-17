@@ -162,8 +162,11 @@ export const getNewProductRollovers = async ({
           // plan's next reset and add its configured duration. Otherwise, fall
           // back to preserving the remainder of the old cycle; lastly the new
           // entitlement's next reset.
-          const expiresAt = newEnt?.rollover
-            ? calculateNextExpiry(newNextResetAt || Date.now(), newEnt.rollover)
+          // Always respect the original tier's rollover duration for leftover base,
+          // even if the new tier has a different (shorter) rollover policy.
+          const expiryAnchor = oldNextResetAt || newNextResetAt || Date.now();
+          const expiresAt = oldEnt?.rollover
+            ? calculateNextExpiry(expiryAnchor, oldEnt.rollover)
             : oldNextResetAt || newNextResetAt || null;
 
           newRollovers.push({
