@@ -23,7 +23,7 @@ import { getSortedRollovers } from "@/internal/customers/cusProducts/cusEnts/cus
 import { calculateNextExpiry } from "@/internal/customers/cusProducts/cusEnts/cusRollovers/rolloverUtils.js";
 import { CusService } from "@/internal/customers/CusService.js";
 import { DrizzleCli } from "@/db/initDrizzle.js";
-import { deductFromCusRollovers } from "@/internal/customers/cusProducts/cusEnts/cusRollovers/rolloverDeductionUtils.js";
+import { deductFromCusRollovers, deductAcrossRollovers } from "@/internal/customers/cusProducts/cusEnts/cusRollovers/rolloverDeductionUtils.js";
 import { refreshCusCache, deleteCusCache } from "@/internal/customers/cusCache/updateCachedCus.js";
 import { syncCreditsToConvex } from "@/external/convex/syncCredits.js";
 
@@ -377,22 +377,13 @@ export const updateUsage = async ({
           });
         }
       } else if (entry.key === "roll") {
-        // Deduct from rollovers per entitlement; pass entity only when that entitlement is entity-scoped
-        const sameFeatureEnts = cusEnts.filter((ce) => isSameFeature(ce));
-        for (const ce of sameFeatureEnts) {
-          if (toDeduct === 0) break;
-          const ceIsEntityScoped = Boolean((ce as any)?.entitlement?.entity_feature_id);
-          toDeduct = await deductFromCusRollovers({
-            toDeduct,
-            cusEnt: ce as any,
-            deductParams: {
-              db,
-              feature,
-              env,
-              entity: ceIsEntityScoped ? (customer.entity ? customer.entity : undefined) : undefined,
-            },
-          });
-        }
+        // Deduct globally across all rollover rows sorted by expiry
+        const entityForRollovers = hasEntityFeature ? (customer.entity ? customer.entity : undefined) : undefined;
+        toDeduct = await deductAcrossRollovers({
+          toDeduct,
+          cusEnts: cusEnts as any,
+          deductParams: { db, feature, env, entity: entityForRollovers },
+        });
       } else if (entry.key === "sub") {
         // Deduct from earliest subscription ce first
         const sSorted = [...subLike].sort((a: any, b: any) => {
@@ -466,16 +457,12 @@ export const updateUsage = async ({
 
       // Rollovers
       if (toDeduct > 0) {
-        const sameFeatureEnts = cusEnts.filter((ce) => isSameFeature(ce));
-        for (const ce of sameFeatureEnts) {
-          if (toDeduct === 0) break;
-          const ceIsEntityScoped = Boolean((ce as any)?.entitlement?.entity_feature_id);
-          toDeduct = await deductFromCusRollovers({
-            toDeduct,
-            cusEnt: ce as any,
-            deductParams: { db, feature, env, entity: ceIsEntityScoped ? (customer.entity ? customer.entity : undefined) : undefined },
-          });
-        }
+        const entityForRollovers = hasEntityFeature ? (customer.entity ? customer.entity : undefined) : undefined;
+        toDeduct = await deductAcrossRollovers({
+          toDeduct,
+          cusEnts: cusEnts as any,
+          deductParams: { db, feature, env, entity: entityForRollovers },
+        });
       }
 
       // Subscription base

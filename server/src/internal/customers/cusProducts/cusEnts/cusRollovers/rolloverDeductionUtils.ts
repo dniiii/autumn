@@ -128,3 +128,69 @@ export const getSortedRollovers = ({
       });
   }
 };
+
+// Deduct across all rollover rows globally by expiry (entity-aware)
+export const deductAcrossRollovers = async ({
+  toDeduct,
+  deductParams,
+  cusEnts,
+}: {
+  toDeduct: number;
+  deductParams: RolloverDeductParams;
+  cusEnts: FullCusEntWithFullCusProduct[];
+}) => {
+  if (toDeduct == 0) return 0;
+
+  const { db, feature, entity } = deductParams;
+  const rows = getSortedRollovers({
+    cusEnts: cusEnts as any,
+    featureId: feature.id,
+    entityId: entity?.id,
+  });
+
+  const toUpdate: Rollover[] = [];
+
+  if (entity) {
+    for (const row of rows) {
+      const e = row.entities[entity.id];
+      if (!e) continue;
+      if (toDeduct === 0) break;
+      if (e.balance >= toDeduct) {
+        e.balance -= toDeduct;
+        e.usage += toDeduct;
+        toUpdate.push(row);
+        toDeduct = 0;
+        break;
+      }
+      if (e.balance > 0) {
+        const used = e.balance;
+        e.balance = 0;
+        e.usage += used;
+        toUpdate.push(row);
+        toDeduct -= used;
+      }
+    }
+  } else {
+    for (let row of rows) {
+      if (toDeduct === 0) break;
+      if (row.balance >= toDeduct) {
+        row = { ...row, balance: row.balance - toDeduct, usage: row.usage + toDeduct };
+        toUpdate.push(row);
+        toDeduct = 0;
+        break;
+      }
+      if (row.balance > 0) {
+        const used = row.balance;
+        row = { ...row, balance: 0, usage: row.usage + used };
+        toUpdate.push(row);
+        toDeduct -= used;
+      }
+    }
+  }
+
+  if (toUpdate.length) {
+    await RolloverService.upsert({ db, rows: toUpdate });
+  }
+
+  return toDeduct;
+};
