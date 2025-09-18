@@ -148,6 +148,14 @@ export const deductAcrossRollovers = async ({
     entityId: entity?.id,
   });
 
+  console.log(
+    `[rollover] deductAcrossRollovers: feature=${feature.id} entity=${entity?.id ?? "-"} toDeduct=${toDeduct} rows=${rows.length}`
+  );
+  if (rows.length > 0) {
+    const sample = rows.slice(0, 5).map((r) => ({ b: (entity ? r.entities[entity.id]?.balance : r.balance) ?? 0, exp: r.expires_at }));
+    console.log(`[rollover] first rows:`, sample);
+  }
+
   const toUpdate: Rollover[] = [];
 
   if (entity) {
@@ -191,6 +199,10 @@ export const deductAcrossRollovers = async ({
   if (toUpdate.length) {
     await RolloverService.upsert({ db, rows: toUpdate });
   }
+
+  console.log(
+    `[rollover] deductAcrossRollovers: leftover=${toDeduct}`
+  );
 
   return toDeduct;
 };

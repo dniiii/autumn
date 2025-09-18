@@ -221,6 +221,11 @@ export const updateUsage = async ({
     entityId,
   });
 
+  // Debug start
+  console.log(
+    `USAGE ROUTE: customer=${customer.id} featureIds=${features.map((f)=>f.id).join(',')} value=${value} entity=${entityId ?? '-'}`
+  );
+
   // 3. Return if no customer entitlements or features found
   if (cusEnts.length === 0 || features.length === 0) {
     console.log("   - No customer entitlements or features found");
@@ -379,11 +384,13 @@ export const updateUsage = async ({
       } else if (entry.key === "roll") {
         // Deduct globally across all rollover rows sorted by expiry
         const entityForRollovers = hasEntityFeature ? (customer.entity ? customer.entity : undefined) : undefined;
+        console.log(`USAGE ROLL START: toDeduct=${toDeduct} entity=${entityForRollovers?.id ?? '-'}`);
         toDeduct = await deductAcrossRollovers({
           toDeduct,
           cusEnts: cusEnts as any,
           deductParams: { db, feature, env, entity: entityForRollovers },
         });
+        console.log(`USAGE ROLL END: leftover=${toDeduct}`);
       } else if (entry.key === "sub") {
         // Deduct from earliest subscription ce first
         const sSorted = [...subLike].sort((a: any, b: any) => {
@@ -458,11 +465,13 @@ export const updateUsage = async ({
       // Rollovers
       if (toDeduct > 0) {
         const entityForRollovers = hasEntityFeature ? (customer.entity ? customer.entity : undefined) : undefined;
+        console.log(`USAGE ROLL FALLBACK START: toDeduct=${toDeduct} entity=${entityForRollovers?.id ?? '-'}`);
         toDeduct = await deductAcrossRollovers({
           toDeduct,
           cusEnts: cusEnts as any,
           deductParams: { db, feature, env, entity: entityForRollovers },
         });
+        console.log(`USAGE ROLL FALLBACK END: leftover=${toDeduct}`);
       }
 
       // Subscription base
