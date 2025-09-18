@@ -209,19 +209,20 @@ export const handleUsageEvent = async ({
   //   isPaidContinuousUse({ feature, fullCus: customer })
   // );
 
-  if (isPaidContinuousUse({ feature, fullCus: customer })) {
-    console.log(`Running update usage task synchronously`);
-    await runUpdateUsageTask({
-      payload,
-      logger: console,
-      db: req.db,
-      throwError: true,
-    });
+  // Opt-in synchronous processing via header or query flag, or if feature is paid continuous use
+  const forceSyncHeader = (req.get && req.get("x-autumn-sync")) || req.headers?.["x-autumn-sync"];
+  const forceSyncQuery = req.query?.sync;
+  const forceSyncBody = req.body?.sync;
+  const forceSync =
+    String(forceSyncHeader).trim() === "1" ||
+    String(forceSyncQuery).trim() === "1" ||
+    forceSyncBody === true;
+
+  if (forceSync || isPaidContinuousUse({ feature, fullCus: customer })) {
+    console.log(`/track: running update usage task synchronously`);
+    await runUpdateUsageTask({ payload, logger: console, db: req.db, throwError: true });
   } else {
-    await addTaskToQueue({
-      jobName: JobName.UpdateUsage,
-      payload,
-    });
+    await addTaskToQueue({ jobName: JobName.UpdateUsage, payload });
   }
 
   return { event: newEvent, affectedFeatures: features, org };
