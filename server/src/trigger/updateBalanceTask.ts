@@ -653,6 +653,13 @@ export const updateCustomerBalance = async ({
       // else fall back to default routing
     }
 
+    // Only pass entityId to rollover deduction when the feature is entity-scoped
+    const hasEntityFeature = cusEnts.some(
+      (ce) =>
+        ce.entitlement.internal_feature_id === feature.internal_id &&
+        (ce as any)?.entitlement?.entity_feature_id
+    );
+
     for (const cusEnt of cusEnts) {
       if (cusEnt.entitlement.internal_feature_id != feature.internal_id) {
         continue;
@@ -665,7 +672,7 @@ export const updateCustomerBalance = async ({
           db,
           feature,
           env,
-          entity: customer.entity ? customer.entity : undefined,
+          entity: hasEntityFeature ? (customer.entity ? customer.entity : undefined) : undefined,
         },
       });
 
