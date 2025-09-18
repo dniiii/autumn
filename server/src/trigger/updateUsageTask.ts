@@ -19,10 +19,12 @@ import {
   deductAllowanceFromCusEnt,
   deductFromUsageBasedCusEnt,
 } from "./updateBalanceTask.js";
+import { getSortedRollovers } from "@/internal/customers/cusProducts/cusEnts/cusRollovers/rolloverDeductionUtils.js";
+import { calculateNextExpiry } from "@/internal/customers/cusProducts/cusEnts/cusRollovers/rolloverUtils.js";
 import { CusService } from "@/internal/customers/CusService.js";
 import { DrizzleCli } from "@/db/initDrizzle.js";
 import { deductFromCusRollovers } from "@/internal/customers/cusProducts/cusEnts/cusRollovers/rolloverDeductionUtils.js";
-import { refreshCusCache } from "@/internal/customers/cusCache/updateCachedCus.js";
+import { refreshCusCache, deleteCusCache } from "@/internal/customers/cusCache/updateCachedCus.js";
 import { syncCreditsToConvex } from "@/external/convex/syncCredits.js";
 
 // 2. Get deductions for each feature
@@ -227,7 +229,7 @@ export const updateUsage = async ({
 
   const isRefund = value < 0;
 
-  for (const obj of featureDeductions) {
+    for (const obj of featureDeductions) {
     let { feature, deduction: toDeduct } = obj;
 
     // Refunds: route negative amounts to the Lifetime (non-expiring) pocket if present
@@ -262,42 +264,245 @@ export const updateUsage = async ({
       // No lifetime pocket found; fall through to default behavior
     }
 
-    for (const cusEnt of cusEnts) {
-      if (cusEnt.entitlement.internal_feature_id != feature.internal_id) {
-        continue;
+    // Ordered deduction across all pocket types (unified by earliest effective expiry)
+    const isSameFeature = (ce: any) => ce.entitlement.internal_feature_id === feature.internal_id;
+    const intervalOf = (ce: any) => ce.entitlement.interval;
+
+    const dailyLike = cusEnts.filter((ce) => isSameFeature(ce) && (
+      intervalOf(ce) === EntInterval.Minute ||
+      intervalOf(ce) === EntInterval.Hour ||
+      intervalOf(ce) === EntInterval.Day
+    ));
+    const subLike = cusEnts.filter((ce) => isSameFeature(ce) && (
+      intervalOf(ce) === EntInterval.Month ||
+      intervalOf(ce) === EntInterval.Quarter ||
+      intervalOf(ce) === EntInterval.SemiAnnual ||
+      intervalOf(ce) === EntInterval.Year
+    ));
+    const lifetimeLike = cusEnts.filter((ce) => isSameFeature(ce) && intervalOf(ce) === EntInterval.Lifetime);
+    const hasEntityFeature = cusEnts.some((ce) => isSameFeature(ce) && Boolean((ce as any)?.entitlement?.entity_feature_id));
+
+    // Compute earliest effective expiry per category
+    const dailyMin = (() => {
+      const candidates = dailyLike.map((ce: any) => ce.next_reset_at).filter((t: any) => typeof t === "number" && t > 0);
+      return candidates.length > 0 ? Math.min(...candidates) : undefined;
+    })();
+
+    const rollMin = (() => {
+      try {
+        const rolls = getSortedRollovers({
+          cusEnts: cusEnts as any,
+          featureId: feature.id,
+          entityId: hasEntityFeature ? customer.entity?.id : undefined,
+        });
+        const withBal = rolls.filter((r: any) => (r.balance ?? 0) > 0 || (r.entities && Object.values(r.entities).some((e: any) => (e.balance ?? 0) > 0)));
+        return withBal.length > 0 ? withBal[0].expires_at || undefined : undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+
+    const subMin = (() => {
+      const effs: number[] = [];
+      for (const ce of subLike) {
+        const ent: any = ce.entitlement;
+        const nextReset: number | undefined = typeof ce.next_reset_at === "number" ? ce.next_reset_at : undefined;
+        if (!nextReset) continue;
+        const eff = ent?.rollover ? calculateNextExpiry(nextReset, ent.rollover) : nextReset;
+        if (typeof eff === "number") effs.push(eff);
+      }
+      return effs.length > 0 ? Math.min(...effs) : undefined;
+    })();
+
+    type CatKey = "daily" | "roll" | "sub";
+    const categoryOrder = (
+      [
+        { key: "daily" as CatKey, ts: dailyMin },
+        { key: "roll" as CatKey, ts: rollMin },
+        { key: "sub" as CatKey, ts: subMin },
+      ] as Array<{ key: CatKey; ts: number | undefined }>
+    ).sort(
+      (a, b) =>
+        (a.ts ?? Number.POSITIVE_INFINITY) - (b.ts ?? Number.POSITIVE_INFINITY)
+    );
+
+    // If none have expiries, process lifetime then usage-based
+    if (categoryOrder.length === 0 && toDeduct > 0 && lifetimeLike.length > 0) {
+      for (const ce of lifetimeLike) {
+        if (toDeduct === 0) break;
+        toDeduct = await deductAllowanceFromCusEnt({
+          toDeduct,
+          cusEnt: ce as any,
+          deductParams: {
+            db,
+            feature,
+            env,
+            org,
+            cusPrices: cusPrices as any[],
+            customer,
+            properties,
+            entity: customer.entity,
+          },
+          featureDeductions,
+          willDeductCredits: true,
+          setZeroAdjustment: true,
+        });
+      }
+    }
+
+    // Cascade by earliest effective expiry: daily vs rollovers vs subscription
+    for (const entry of categoryOrder) {
+      if (toDeduct === 0) break;
+      if (entry.key === "daily") {
+        // Deduct from earliest daily ce first, then remaining dailies
+        const dSorted = [...dailyLike].sort((a: any, b: any) => (a.next_reset_at || 0) - (b.next_reset_at || 0));
+        for (const ce of dSorted) {
+          if (toDeduct === 0) break;
+          toDeduct = await deductAllowanceFromCusEnt({
+            toDeduct,
+            cusEnt: ce as any,
+            deductParams: {
+              db,
+              feature,
+              env,
+              org,
+              cusPrices: cusPrices as any[],
+              customer,
+              properties,
+              entity: customer.entity,
+            },
+            featureDeductions,
+            willDeductCredits: true,
+            setZeroAdjustment: true,
+          });
+        }
+      } else if (entry.key === "roll") {
+        // Deduct from rollovers per entitlement; pass entity only when that entitlement is entity-scoped
+        const sameFeatureEnts = cusEnts.filter((ce) => isSameFeature(ce));
+        for (const ce of sameFeatureEnts) {
+          if (toDeduct === 0) break;
+          const ceIsEntityScoped = Boolean((ce as any)?.entitlement?.entity_feature_id);
+          toDeduct = await deductFromCusRollovers({
+            toDeduct,
+            cusEnt: ce as any,
+            deductParams: {
+              db,
+              feature,
+              env,
+              entity: ceIsEntityScoped ? (customer.entity ? customer.entity : undefined) : undefined,
+            },
+          });
+        }
+      } else if (entry.key === "sub") {
+        // Deduct from earliest subscription ce first
+        const sSorted = [...subLike].sort((a: any, b: any) => {
+          const entA: any = a.entitlement, entB: any = b.entitlement;
+          const aNext = a.next_reset_at || 0, bNext = b.next_reset_at || 0;
+          const aEff = entA?.rollover ? calculateNextExpiry(aNext, entA.rollover) : aNext;
+          const bEff = entB?.rollover ? calculateNextExpiry(bNext, entB.rollover) : bNext;
+          return (aEff || 0) - (bEff || 0);
+        });
+        for (const ce of sSorted) {
+          if (toDeduct === 0) break;
+          toDeduct = await deductAllowanceFromCusEnt({
+            toDeduct,
+            cusEnt: ce as any,
+            deductParams: {
+              db,
+              feature,
+              env,
+              org,
+              cusPrices: cusPrices as any[],
+              customer,
+              properties,
+              entity: customer.entity,
+            },
+            featureDeductions,
+            willDeductCredits: true,
+            setZeroAdjustment: true,
+          });
+        }
+      }
+    }
+
+    // Finally lifetime if still needed
+    if (toDeduct > 0 && lifetimeLike.length > 0) {
+      for (const ce of lifetimeLike) {
+        if (toDeduct === 0) break;
+        toDeduct = await deductAllowanceFromCusEnt({
+          toDeduct,
+          cusEnt: ce as any,
+          deductParams: {
+            db,
+            feature,
+            env,
+            org,
+            cusPrices: cusPrices as any[],
+            customer,
+            properties,
+            entity: customer.entity,
+          },
+          featureDeductions,
+          willDeductCredits: true,
+          setZeroAdjustment: true,
+        });
+      }
+    }
+
+    // Sequential fallback: if expiry-ordered routing didn’t consume everything, walk pockets in fixed order.
+    if (toDeduct > 0) {
+      // Daily first
+      for (const ce of dailyLike) {
+        if (toDeduct === 0) break;
+        toDeduct = await deductAllowanceFromCusEnt({
+          toDeduct,
+          cusEnt: ce as any,
+          deductParams: { db, feature, env, org, cusPrices: cusPrices as any[], customer, properties, entity: customer.entity },
+          featureDeductions,
+          willDeductCredits: true,
+          setZeroAdjustment: true,
+        });
       }
 
-      toDeduct = await deductFromCusRollovers({
-        toDeduct,
-        cusEnt,
-        deductParams: {
-          db,
-          feature,
-          env,
-          entity: customer.entity ? customer.entity : undefined,
-        },
-      });
-
-      if (toDeduct == 0) {
-        continue;
+      // Rollovers
+      if (toDeduct > 0) {
+        const sameFeatureEnts = cusEnts.filter((ce) => isSameFeature(ce));
+        for (const ce of sameFeatureEnts) {
+          if (toDeduct === 0) break;
+          const ceIsEntityScoped = Boolean((ce as any)?.entitlement?.entity_feature_id);
+          toDeduct = await deductFromCusRollovers({
+            toDeduct,
+            cusEnt: ce as any,
+            deductParams: { db, feature, env, entity: ceIsEntityScoped ? (customer.entity ? customer.entity : undefined) : undefined },
+          });
+        }
       }
-      toDeduct = await deductAllowanceFromCusEnt({
-        toDeduct,
-        cusEnt,
-        deductParams: {
-          db,
-          feature,
-          env,
-          org,
-          cusPrices: cusPrices as any[],
-          customer,
-          properties,
-          entity: customer.entity,
-        },
-        featureDeductions,
-        willDeductCredits: true,
-        setZeroAdjustment: true,
-      });
+
+      // Subscription base
+      for (const ce of subLike) {
+        if (toDeduct === 0) break;
+        toDeduct = await deductAllowanceFromCusEnt({
+          toDeduct,
+          cusEnt: ce as any,
+          deductParams: { db, feature, env, org, cusPrices: cusPrices as any[], customer, properties, entity: customer.entity },
+          featureDeductions,
+          willDeductCredits: true,
+          setZeroAdjustment: true,
+        });
+      }
+
+      // Lifetime last
+      for (const ce of lifetimeLike) {
+        if (toDeduct === 0) break;
+        toDeduct = await deductAllowanceFromCusEnt({
+          toDeduct,
+          cusEnt: ce as any,
+          deductParams: { db, feature, env, org, cusPrices: cusPrices as any[], customer, properties, entity: customer.entity },
+          featureDeductions,
+          willDeductCredits: true,
+          setZeroAdjustment: true,
+        });
+      }
     }
 
     if (toDeduct == 0) {
@@ -369,13 +574,9 @@ export const runUpdateUsageTask = async ({
       entityId,
     });
 
-    await refreshCusCache({
-      db,
-      customerId,
-      entityId,
-      org,
-      env,
-    });
+    // Ensure stale cache is dropped, then rebuild
+    await deleteCusCache({ db, customerId, org, env });
+    await refreshCusCache({ db, customerId, entityId, org, env });
 
     if (!cusEnts || cusEnts.length === 0) {
       return;
